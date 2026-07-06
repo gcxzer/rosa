@@ -15,9 +15,8 @@
 import time
 import unittest
 
-from langchain.globals import get_debug, get_verbose, set_debug
-
-from src.rosa.tools.system import set_verbosity, set_debugging, wait
+import tools.system as system_tools
+from tools.system import set_verbosity, set_debugging, wait
 
 
 class TestSystemTools(unittest.TestCase):
@@ -25,19 +24,18 @@ class TestSystemTools(unittest.TestCase):
     def test_sets_verbosity_to_true(self):
         result = set_verbosity.invoke({"enable_verbose_messages": True})
         self.assertEqual(result, "verbose 详细信息现在已启用。")
-        self.assertTrue(get_verbose())
+        self.assertTrue(system_tools.VERBOSE)
         result = set_verbosity.invoke({"enable_verbose_messages": False})
         self.assertEqual(result, "verbose 详细信息现在已禁用。")
-        self.assertFalse(get_verbose())
+        self.assertFalse(system_tools.VERBOSE)
 
     def test_sets_debug_to_true(self):
         result = set_debugging.invoke({"enable_debug_messages": True})
         self.assertEqual(result, "debug 调试信息现在已启用。")
-        self.assertTrue(get_debug())
-        set_debug(False)
+        self.assertTrue(system_tools.DEBUG)
         result = set_debugging.invoke({"enable_debug_messages": False})
         self.assertEqual(result, "debug 调试信息现在已禁用。")
-        self.assertFalse(get_debug())
+        self.assertFalse(system_tools.DEBUG)
 
     def test_waits_for_specified_seconds(self):
         start = time.time()

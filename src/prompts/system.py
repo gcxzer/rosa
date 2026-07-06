@@ -61,6 +61,31 @@ class RobotSystemPrompts:
         return s
 
 
+def render_system_prompt(robot_prompts: Optional[RobotSystemPrompts] = None) -> str:
+    """把 ROSA 的多段 system prompt 渲染成 LangChain v1 `create_agent` 需要的字符串。
+
+    `create_agent` 接收一个 system prompt 字符串，并且内置 messages state 和工具循环。
+    因此这里把默认 prompt 按定义顺序拼成一个明确的 system prompt 字符串。
+
+    注意：这里必须先复制 `system_prompts`，再追加机器人专属 prompt。否则如果直接
+    `append()` 到全局 `system_prompts`，一个 ROSA 实例传入的机器人配置会污染后续
+    其他实例，导致 prompt 越建越长、内容互相串台。
+    """
+    prompt_messages = list(system_prompts)
+    if robot_prompts:
+        prompt_messages.append(robot_prompts.as_message())
+
+    sections: list[str] = []
+    for role, content in prompt_messages:
+        # 当前列表里都是 system prompt；这里检查 role 可以让以后维护者一眼看出：
+        # 如果这里混入了非 system 消息，create_agent 的 system_prompt 语义就不再成立。
+        if role != "system":
+            raise ValueError("ROSA system_prompts 只能包含 system 消息。")
+        sections.append(str(content).strip())
+
+    return "\n\n".join(section for section in sections if section)
+
+
 system_prompts = [
     (
         "system",

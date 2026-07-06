@@ -15,7 +15,7 @@
 import unittest
 from unittest.mock import patch, mock_open
 
-from src.rosa.tools.log import read_log
+from tools.log import read_log
 
 
 class TestReadLog(unittest.TestCase):

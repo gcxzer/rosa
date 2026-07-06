@@ -39,12 +39,19 @@ def inject_blacklist(default_blacklist: List[str]):
         def wrapper(*args, **kwargs):
             if args and isinstance(args[0], dict):
                 if "blacklist" in args[0]:
-                    args[0]["blacklist"] = default_blacklist + args[0]["blacklist"]
+                    # LangChain v1 的工具执行可能会把可选参数的默认值 None 显式传入。
+                    # 对 blacklist 来说，None 和“模型没有提供额外黑名单”语义相同。
+                    args[0]["blacklist"] = default_blacklist + (
+                        args[0]["blacklist"] or []
+                    )
                 else:
                     args[0]["blacklist"] = default_blacklist
             else:
                 if "blacklist" in kwargs:
-                    kwargs["blacklist"] = default_blacklist + kwargs["blacklist"]
+                    # 同上，把 None 规范成空列表，保证工具函数总是收到 list。
+                    kwargs["blacklist"] = default_blacklist + (
+                        kwargs["blacklist"] or []
+                    )
                 else:
                     params = inspect.signature(tool_func).parameters
                     if "blacklist" in params:
@@ -96,7 +103,7 @@ class ROSATools:
         # 当前分支只保留 ROS2 工具，因此这里始终加载 ROS2 工具包。
         from . import ros2
 
-        self.__iterative_add(ros2, blacklist=blacklist)
+        self.__iterative_add(ros2)
 
     def get_tools(self) -> List[BaseTool]:
         return self.__tools
@@ -108,26 +115,25 @@ class ROSATools:
                 tool.func = inject_blacklist(self.__blacklist)(tool.func)
             self.__tools.append(tool)
 
-    def __iterative_add(self, package, blacklist: Optional[List[str]] = None):
+    def __iterative_add(self, package):
         """
         遍历一个 Python 包，并把其中的每个 @tool 添加到工具列表。
 
         :param package: 需要遍历的 Python 包。
-        :param blacklist: 某些工具用于过滤结果的黑名单参数。
         """
         for tool_name in dir(package):
             if not tool_name.startswith("_"):
                 t = getattr(package, tool_name)
                 self.__add_tool(t)
 
-    def add_packages(self, tool_packages: List, blacklist: Optional[List[str]] = None):
+    def add_packages(self, tool_packages: List):
         """
         遍历每个工具包，并把其中的工具加入当前 Tools 对象。
 
         :param tool_packages: 需要添加到当前 Tools 对象中的工具包列表。
         """
         for pkg in tool_packages:
-            self.__iterative_add(pkg, blacklist=blacklist)
+            self.__iterative_add(pkg)
 
     def add_tools(self, tools: list):
         """

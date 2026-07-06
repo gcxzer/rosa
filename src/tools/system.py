@@ -14,8 +14,11 @@
 
 import time
 
-from langchain.globals import set_debug, set_verbose
 from langchain_core.tools import tool
+
+
+VERBOSE = False
+DEBUG = False
 
 
 @tool
@@ -26,8 +29,8 @@ def set_verbosity(enable_verbose_messages: bool) -> str:
     :arg enable_verbose_messages: 用于启用或禁用 verbose 详细信息的布尔值。
     """
     global VERBOSE
+    # 这个工具现在维护 ROSA 自己的偏好状态，供外层调试入口或集成 UI 读取。
     VERBOSE = enable_verbose_messages
-    set_verbose(VERBOSE)
     return f"verbose 详细信息现在已{'启用' if VERBOSE else '禁用'}。"
 
 
@@ -40,8 +43,9 @@ def set_debugging(enable_debug_messages: bool) -> str:
     :arg enable_debug_messages: 用于启用或禁用 debug 调试信息的布尔值。
     """
     global DEBUG
+    # `create_agent(debug=...)` 是构造期配置，运行中的工具无法安全地重编译 agent。
+    # 因此这里记录 ROSA 侧 debug 偏好。
     DEBUG = enable_debug_messages
-    set_debug(DEBUG)
     return f"debug 调试信息现在已{'启用' if DEBUG else '禁用'}。"
 
 

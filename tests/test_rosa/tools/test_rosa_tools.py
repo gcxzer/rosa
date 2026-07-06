@@ -16,7 +16,7 @@ import unittest
 
 from langchain_core.tools import tool
 
-from src.rosa.tools import ROSATools, inject_blacklist
+from tools.registry import ROSATools, inject_blacklist
 
 
 @tool

@@ -16,7 +16,7 @@ import math
 import statistics
 import unittest
 
-from src.rosa.tools.calculation import (
+from tools.calculation import (
     add_all,
     multiply_all,
     mean,

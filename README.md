@@ -1,106 +1,207 @@
-# ROSA ROS2-only 中文 fork
+# ROSA fork
 
-这是一个基于 [NASA JPL ROSA](https://github.com/nasa-jpl/rosa) 的个人 fork。这个分支不再追求完整保留上游原版 README 中的全部介绍、演示和历史功能，而是把代码库整理成一个更适合继续研究、阅读和二次开发的 ROS2-only 版本。
+这是一个基于 [NASA JPL ROSA](https://github.com/nasa-jpl/rosa) 的个人 fork。当前分支不再完整保留上游的历史功能，而是整理成一个更适合继续研究、阅读和二次开发的 ROS2-only 版本。
 
-上游项目对应论文：
+上游论文：
 
 - [ROSA: A Modular Agentic AI Framework for ROS-based Robot Systems](https://arxiv.org/abs/2410.06472)
 
+详细改造记录见 [CHANGES.md](CHANGES.md)。
+
 ## 当前定位
 
-这个 fork 目前聚焦三件事：
+这个 fork 主要做三件事：
 
 - 只保留 ROS2 工具链。
-- 将项目文档、代码注释、docstring、系统 prompt 和工具输出整理成中文。
-- 清理旧依赖路径和弃用 warning，让后续开发更干净。
+- 使用 LangChain v1 agent API 管理工具调用和对话状态。
+- 用新架构重写 TurtleAgent，让 turtlesim demo 也走 ROS2-only + Codex + LangChain v1。
 
-如果需要查看上游原始功能、历史演示、Wiki 或完整项目背景，请直接看 [NASA JPL ROSA 原仓库](https://github.com/nasa-jpl/rosa)。
+## 环境要求
 
-## 已完成改动
-
-- 删除 ROS1 工具实现：`src/rosa/tools/ros1.py`。
-- 删除 ROS1 相关测试：`tests/test_rosa/tools/test_ros1.py`。
-- 删除基于 `catkin`、`rospy`、`roslaunch` 的旧版 TurtleAgent 示例。
-- `ROSA` 和 `ROSATools` 现在只接受 `ros_version=2`。
-- 系统 prompt 已更新为 ROS2 工具名，例如 `ros2_node_list`、`ros2_topic_list`、`ros2_service_list`、`ros2_param_*`。
-- Dockerfile 已改为 ROS2 Humble 环境。
-- CI 已删除 Noetic/ROS1 job，只保留 ROS2 Humble 测试方向。
-- LangChain 工具导入迁移到 `langchain_core.tools`。
-- 修复 `BaseTool` 旧式调用导致的弃用 warning。
-- 将主要文档、注释、docstring、prompt 和用户可见输出改为中文。
-
-## 快速开始
-
-环境要求：
-
-- Python 3.9+
-- ROS2 Humble、Iron、Jazzy 或更高版本
+- Python 3.10+
 - `uv`
+- ROS2 Humble、Iron、Jazzy 或更高版本
+- 本机已经登录 Codex，并存在 `~/.codex/auth.json`
 
-安装依赖并运行测试：
+如果需要调用真实 ROS2 系统，请先在当前 shell 中 source 对应 ROS2 环境。
+
+## 快速运行
+
+运行本地统一入口：
+
+```bash
+uv run python main.py --agent turtle "列出 turtlesim 当前的 ROS2 node、topic 和 service"
+```
+
+指定模型和 thinking mode：
+
+```bash
+uv run python main.py --agent turtle --model gpt-5.5 --thinking high "当前有哪些 ROS2 node"
+```
+
+`--thinking none` 表示不显式传 reasoning effort。当前可选值：
+
+```text
+none, low, medium, high, xhigh
+```
+
+在真实绘图前，请先启动 turtlesim，并确保运行 `main.py` 的 shell 能访问同一个 ROS2 graph。
+
+## 代码用法
+
+```python
+from codex import CodexChatModel
+from rosa import ROSA
+
+llm = CodexChatModel(model="gpt-5.5", thinking="high")
+agent = ROSA(ros_version=2, llm=llm, streaming=True)
+
+result = agent.invoke("列出当前系统中的 ROS2 topic")
+print(result)
+```
+
+流式调用：
+
+```python
+async for event in agent.astream("当前有哪些 ROS2 node"):
+    if event["type"] == "token":
+        print(event["content"], end="", flush=True)
+    elif event["type"] == "tool_start":
+        print("[tool:start]", event["name"], event["input"])
+    elif event["type"] == "tool_end":
+        print("[tool:end]", event["name"], event["output"])
+    elif event["type"] == "final":
+        print(event["content"])
+```
+
+`ROSA.astream()` 对外只暴露稳定事件：
+
+- `token`
+- `tool_start`
+- `tool_end`
+- `final`
+- `error`
+
+## 工具扩展
+
+`ROSA` 默认加载这些工具模块：
+
+- `src/tools/calculation.py`
+- `src/tools/log.py`
+- `src/tools/system.py`
+- `src/tools/ros2.py`
+
+如果只想添加几个已经创建好的 LangChain tool，用 `tools`：
+
+```python
+agent = ROSA(
+    ros_version=2,
+    llm=llm,
+    tools=[my_tool],
+)
+```
+
+如果想扫描一个模块里的公开 LangChain tools，用 `tool_packages`：
+
+```python
+import my_tools
+
+agent = ROSA(
+    ros_version=2,
+    llm=llm,
+    tool_packages=[my_tools],
+)
+```
+
+`blacklist` 只在初始化 `ROSA` / `ROSATools` 时传入，并统一注入到需要该参数的 ROS2 工具函数里。
+
+## TurtleAgent
+
+TurtleAgent 是基于当前 ROSA runtime 重写的 turtlesim 专用 agent：
+
+- 代码入口是 `turtle_agent/agent.py`。
+- 专用 prompt 在 `turtle_agent/prompts.py`。
+- 专用工具在 `turtle_agent/tools.py`。
+- 本地调试入口是统一的 `main.py --agent turtle`。
+
+代码使用方式：
+
+```python
+from turtle_agent import TurtleAgent
+
+agent = TurtleAgent(streaming=True)
+agent.invoke("把 turtle1 传送到 (3, 3)，然后画一个边长为 2 的正方形")
+```
+
+TurtleAgent 额外提供这些 turtlesim 工具：
+
+- `turtle_get_pose`
+- `turtle_spawn`
+- `turtle_kill`
+- `turtlesim_clear`
+- `turtlesim_reset`
+- `turtlesim_set_background`
+- `turtle_set_pen`
+- `turtle_teleport_absolute`
+- `turtle_teleport_relative`
+- `turtle_publish_twist`
+- `turtle_stop`
+- `draw_line_segment`
+- `draw_polyline`
+- `draw_rectangle`
+- `draw_circle`
+- `draw_arc`
+- `calculate_rectangle_bounds`
+- `check_rectangles_overlap`
+
+## 开发验证
+
+语法检查：
+
+```bash
+uv run python -m compileall main.py src turtle_agent tests
+```
+
+运行测试，并把 warning 当作失败：
 
 ```bash
 uv run --with pytest pytest -q -W error
 ```
 
-语法检查：
-
-```bash
-uv run python -m compileall src tests
-```
-
 当前验证结果：
 
 ```text
-80 passed
+106 passed
 ```
 
-其中 `-W error` 会把 warning 当作失败处理，因此当前测试路径下没有残留的 LangChain warning。
+## 目录说明
 
-## 基本用法
-
-```python
-from rosa import ROSA
-
-llm = get_your_llm_here()
-agent = ROSA(ros_version=2, llm=llm)
-agent.invoke("列出当前系统中的 ROS2 topic")
-```
+- `main.py`：本地统一流式测试入口，通过 `--agent` 指定 agent。当前只有 `turtle`。
+- `src/rosa/rosa.py`：ROSA agent 主体逻辑。
+- `src/codex/`：Codex Responses API 到 LangChain `BaseChatModel` 的适配层。
+- `src/prompts/`：系统 prompt 和机器人 prompt 拼接逻辑。
+- `src/tools/`：默认工具、ROS2 CLI 封装和工具注册逻辑。
+- `turtle_agent/`：和 `src/` 同级的 ROS2 turtlesim agent 示例。
+- `tests/`：单元测试。
 
 ## ROS2 TurtleSim 环境
 
-仓库中保留了一个 Docker 脚本，用于启动 ROS2 TurtleSim 环境，方便验证 ROS2 node、topic、service 和 parameter 工具。
+仓库中保留了 Docker 脚本，用于启动 ROS2 TurtleSim 环境，方便验证 ROS2 node、topic、service 和 parameter 工具。
 
 ```bash
 ./demo.sh
 ```
 
-当前 fork 已删除旧版 TurtleAgent 示例；`demo.sh` 只负责提供 ROS2 TurtleSim 运行环境。
-
-## 目录说明
-
-- `src/rosa/rosa.py`：ROSA agent 主体逻辑。
-- `src/rosa/prompts.py`：系统 prompt 和机器人专属 prompt 拼接逻辑。
-- `src/rosa/tools/ros2.py`：ROS2 CLI 工具封装。
-- `src/rosa/tools/calculation.py`：数学和几何计算工具。
-- `src/rosa/tools/log.py`：日志读取工具。
-- `src/rosa/tools/system.py`：系统辅助工具。
-- `tests/test_rosa/tools/test_ros2.py`：ROS2 工具测试。
-- `tests/test_rosa/tools/test_rosa_tools.py`：工具集合初始化和黑名单注入测试。
+当前 fork 已删除旧版 ROS1 TurtleAgent 示例；新的 TurtleAgent 使用 `main.py --agent turtle` 运行。
 
 ## 和上游的关系
 
-这个仓库保留上游许可证和论文引用，但当前代码目标已经和上游原版不同：
+这个仓库保留上游许可证和论文引用，但当前代码目标和上游原版不同：
 
 - 上游：同时支持 ROS1 和 ROS2，并包含历史 TurtleAgent demo。
-- 本 fork：删除 ROS1，保留并整理 ROS2 agent 工具链。
+- 本 fork：删除 ROS1 和其他模型 provider，保留 ROS2 agent 工具链，默认面向 Codex Responses API。
 
-后续如果需要从上游同步改动，应重点检查：
-
-- LangChain API 是否变化。
-- ROS2 CLI 输出格式是否变化。
-- 上游是否新增值得迁移的 ROS2 工具。
-- 本 fork 删除 ROS1 后，是否需要手动调整 merge conflict。
+如果需要查看上游原始功能、历史演示、Wiki 或完整项目背景，请直接看 [NASA JPL ROSA 原仓库](https://github.com/nasa-jpl/rosa)。
 
 ## 许可证
 

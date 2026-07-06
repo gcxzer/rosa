@@ -12,7 +12,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from .prompts import RobotSystemPrompts
-from .rosa import ROSA, ChatModel
+from prompts.system import RobotSystemPrompts
+from .rosa import ROSA
+from codex import CodexChatModel
 
-__all__ = ["ROSA", "RobotSystemPrompts", "ChatModel"]
+__all__ = ["ROSA", "RobotSystemPrompts", "CodexChatModel"]
