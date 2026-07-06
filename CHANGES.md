@@ -18,6 +18,7 @@
 - `main.py` 默认进入多轮对话，不再保留一次性调用模式，也不需要 `--chat` 参数。
 - `main.py` 固定使用 `.rosa/sessions/` 保存本地 transcript，只保留 `--session-id` 用于继续已有 session。
 - 不传 prompt 启动时，默认先发送 `你好，你是谁？`，然后继续进入多轮对话。
+- 将单轮对话执行逻辑从 `main.py` 移到 `src/sessions/runner.py`，入口只保留参数解析和交互循环。
 
 ### 重写 TurtleAgent
 
@@ -83,7 +84,7 @@ uv run python main.py --help
 测试结果：
 
 ```text
-109 passed
+110 passed
 ```
 
 也验证过 `main.py` 可以向模型发送一条简单消息并收到响应。

@@ -119,7 +119,8 @@ uv run python main.py --agent turtle --session-id 20260706_120000_abcd1234
 - `turtle_agent/tools.py`：当前 agent 的平台专用工具。
 - `src/rosa/rosa.py`：底层 ROSA agent runtime。
 - `src/codex/`：Codex Responses API 到 LangChain `BaseChatModel` 的适配层。
-- `src/sessions/`：本地 session 索引和 JSONL transcript 存储。
+- `src/sessions/store.py`：本地 session 索引和 JSONL transcript 存储。
+- `src/sessions/runner.py`：执行一轮 session 对话，集中处理流式事件打印和 transcript 写入。
 - `src/tools/`：通用 ROS2、系统、日志和计算工具。
 - `tests/`：单元测试。
 
@@ -140,7 +141,7 @@ uv run --with pytest pytest -q -W error
 当前验证结果：
 
 ```text
-109 passed
+110 passed
 ```
 
 ## 许可证

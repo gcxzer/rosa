@@ -15,40 +15,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from sessions import ROSASessionStore, SessionNotFoundError
+from sessions import ROSASessionStore, SessionNotFoundError, run_session_prompt
 from turtle_agent import TurtleAgent
 
 
 async def main() -> None:
     """解析命令行参数，创建指定 agent，并消费 `ROSA.astream()` 的事件流。"""
     parser = argparse.ArgumentParser(description="ROSA 本地统一测试入口")
-    parser.add_argument(
-        "prompt",
-        nargs="*",
-        help="要发送给 agent 的文本；提供时会先作为多轮对话的第一条消息。",
-    )
-    parser.add_argument(
-        "--agent",
-        default="turtle",
-        choices=["turtle"],
-        help="要启动的 agent。当前只有 turtle。",
-    )
-    parser.add_argument(
-        "--model",
-        default="gpt-5.5",
-        help="传给 Codex Responses API 的模型名。",
-    )
-    parser.add_argument(
-        "--thinking",
-        default="none",
-        choices=["none", "low", "medium", "high", "xhigh"],
-        help="Codex reasoning effort。none 表示不覆盖默认 thinking。",
-    )
-    parser.add_argument(
-        "--session-id",
-        default="",
-        help="继续已有 session；不传时会创建新 session。",
-    )
+    parser.add_argument("prompt", nargs="*", help="要发送给 agent 的文本；提供时会先作为多轮对话的第一条消息。")
+    parser.add_argument("--agent", default="turtle", choices=["turtle"], help="要启动的 agent。当前只有 turtle。")
+    parser.add_argument("--model", default="gpt-5.5", help="传给 Codex Responses API 的模型名。")
+    parser.add_argument("--thinking", default="none", choices=["none", "low", "medium", "high", "xhigh"], help="Codex reasoning effort。none 表示不覆盖默认 thinking。")
+    parser.add_argument("--session-id", default="", help="继续已有 session；不传时会创建新 session。")
     args = parser.parse_args()
 
     # 命令行里不加引号时，prompt 可能被 shell 拆成多个片段；这里统一拼回一句话。
@@ -85,46 +63,6 @@ async def main() -> None:
         agent.use_session(session.metadata.session_id, [])
         print(f"新建 session：{session.metadata.session_id} - {session.metadata.title}")
 
-    async def run_prompt(current_prompt: str) -> None:
-        """执行一轮对话，并把 user/assistant 消息写入本地 transcript。"""
-        session_store.append_message(
-            session.metadata.session_id,
-            role="user",
-            content=current_prompt,
-        )
-        printed_token = False
-        final_content = ""
-        error_content = ""
-
-        # 所有 agent 都使用 ROSA.astream() 的统一事件格式；入口只负责展示和持久化。
-        async for event in agent.astream(current_prompt):
-            event_type = event.get("type")
-            if event_type == "token":
-                # token 事件表示模型正在流式输出正文片段，需要连续打印在同一行。
-                printed_token = True
-                print(event.get("content", ""), end="", flush=True)
-            elif event_type == "tool_start":
-                # tool_start/tool_end 用于观察 agent 调用了哪个工具，以及输入输出。
-                print(f"\n[tool:start] {event.get('name')} {event.get('input')}")
-            elif event_type == "tool_end":
-                print(f"\n[tool:end] {event.get('name')} {event.get('output')}")
-            elif event_type == "final":
-                final_content = str(event.get("content", "") or "")
-                if printed_token:
-                    print()
-                else:
-                    print(final_content)
-            elif event_type == "error":
-                error_content = str(event.get("content", "") or "")
-                print(f"\n[error] {error_content}")
-
-        session_store.append_message(
-            session.metadata.session_id,
-            role="assistant",
-            content=final_content or error_content,
-            metadata={"error": bool(error_content)} if error_content else {},
-        )
-
     print("进入多轮对话。输入 exit/quit 退出，输入 clear/new 新建 session。")
     # 如果命令行已经带了 prompt，先把它当作第一条用户消息发送；后续继续停在交互循环里。
     queued_prompt = prompt
@@ -157,7 +95,12 @@ async def main() -> None:
             print(f"已新建 session：{session.metadata.session_id}")
             continue
 
-        await run_prompt(current_prompt)
+        await run_session_prompt(
+            agent=agent,
+            session_store=session_store,
+            session_id=session.metadata.session_id,
+            prompt=current_prompt,
+        )
 
 
 if __name__ == "__main__":
