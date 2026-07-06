@@ -48,9 +48,6 @@ dist/
 *.egg
 pip-wheel-metadata/
 
-# uv 本地运行可能生成的锁文件；这个 fork 当前不跟踪它。
-uv.lock
-
 # ROS2 / colcon 本地工作区产物和日志。
 install/
 log/

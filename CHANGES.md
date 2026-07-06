@@ -8,6 +8,11 @@
 
 ## 主要改动
 
+### 提交 uv.lock
+
+- 从 `.gitignore` 中移除 `uv.lock`。
+- 提交 `uv.lock`，让本地开发、测试和 `uv run` 使用一致的依赖解析结果。
+
 ### 增加本地 Session 管理
 
 - 参考 Paper_Notes 的后端 session 管理方式，新增 `src/sessions/`。
