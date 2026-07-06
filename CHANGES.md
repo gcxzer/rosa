@@ -1,6 +1,6 @@
 # ROSA Fork 改动记录
 
-这个文件记录当前 fork 相对原始 NASA JPL ROSA 项目的主要改动。README 只保留项目入口说明，具体改造内容集中放在这里，后续继续重构时也方便追加。
+这个文件记录当前 fork 相对原始 NASA JPL ROSA 项目的主要改动。
 
 ## 当前目标
 
@@ -82,10 +82,21 @@
 - 删除 `setup.py`。
 - 以 `pyproject.toml` 作为项目依赖和打包配置入口。
 
+### 删除旧 Docker Demo
+
+- 删除旧的 `demo.sh` 和 `Dockerfile`。
+- 当前 fork 不再维护旧式 Docker turtlesim demo；TurtleAgent 统一通过 `main.py --agent turtle` 运行。
+- 如果需要真实控制 turtlesim，请在本机或外部 ROS2 环境中先启动 turtlesim，并确保运行 `main.py` 的 shell 可以访问同一个 ROS2 graph。
+
 ### 清理忽略文件
 
 - `.gitignore` 增加本地开发、缓存和 OpenSpec/Codex 相关忽略项。
 - `.codex/`、`openspec/`、`uv.lock` 等本地或规划文件不进入版本管理。
+- 删除误提交的 `.env`。
+- 删除旧 GitHub Actions workflow：
+  - 旧 CI 仍使用 `unittest discover`，不能覆盖当前 pytest 风格测试。
+  - 旧 PyPI 发布 workflow 仍面向 `jpl-rosa`，不适配当前 fork。
+- 清理本地生成产物和系统缓存，例如 `src/jpl_rosa.egg-info/` 和 `.DS_Store`。
 
 ## 当前验证状态
 

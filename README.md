@@ -1,10 +1,6 @@
 # ROSA fork
 
-这是一个基于 [NASA JPL ROSA](https://github.com/nasa-jpl/rosa) 的个人 fork。当前分支不再完整保留上游的历史功能，而是整理成一个更适合继续研究、阅读和二次开发的 ROS2-only 版本。
-
-上游论文：
-
-- [ROSA: A Modular Agentic AI Framework for ROS-based Robot Systems](https://arxiv.org/abs/2410.06472)
+这是一个基于 [NASA JPL ROSA](https://github.com/nasa-jpl/rosa) 的个人 fork。一个更适合继续研究、阅读和二次开发的 ROS2-only 版本。
 
 详细改造记录见 [CHANGES.md](CHANGES.md)。
 
@@ -60,28 +56,6 @@ result = agent.invoke("列出当前系统中的 ROS2 topic")
 print(result)
 ```
 
-流式调用：
-
-```python
-async for event in agent.astream("当前有哪些 ROS2 node"):
-    if event["type"] == "token":
-        print(event["content"], end="", flush=True)
-    elif event["type"] == "tool_start":
-        print("[tool:start]", event["name"], event["input"])
-    elif event["type"] == "tool_end":
-        print("[tool:end]", event["name"], event["output"])
-    elif event["type"] == "final":
-        print(event["content"])
-```
-
-`ROSA.astream()` 对外只暴露稳定事件：
-
-- `token`
-- `tool_start`
-- `tool_end`
-- `final`
-- `error`
-
 ## 工具扩展
 
 `ROSA` 默认加载这些工具模块：
@@ -133,27 +107,6 @@ agent = TurtleAgent(streaming=True)
 agent.invoke("把 turtle1 传送到 (3, 3)，然后画一个边长为 2 的正方形")
 ```
 
-TurtleAgent 额外提供这些 turtlesim 工具：
-
-- `turtle_get_pose`
-- `turtle_spawn`
-- `turtle_kill`
-- `turtlesim_clear`
-- `turtlesim_reset`
-- `turtlesim_set_background`
-- `turtle_set_pen`
-- `turtle_teleport_absolute`
-- `turtle_teleport_relative`
-- `turtle_publish_twist`
-- `turtle_stop`
-- `draw_line_segment`
-- `draw_polyline`
-- `draw_rectangle`
-- `draw_circle`
-- `draw_arc`
-- `calculate_rectangle_bounds`
-- `check_rectangles_overlap`
-
 ## 开发验证
 
 语法检查：
@@ -184,25 +137,8 @@ uv run --with pytest pytest -q -W error
 - `turtle_agent/`：和 `src/` 同级的 ROS2 turtlesim agent 示例。
 - `tests/`：单元测试。
 
-## ROS2 TurtleSim 环境
-
-仓库中保留了 Docker 脚本，用于启动 ROS2 TurtleSim 环境，方便验证 ROS2 node、topic、service 和 parameter 工具。
-
-```bash
-./demo.sh
-```
-
 当前 fork 已删除旧版 ROS1 TurtleAgent 示例；新的 TurtleAgent 使用 `main.py --agent turtle` 运行。
-
-## 和上游的关系
-
-这个仓库保留上游许可证和论文引用，但当前代码目标和上游原版不同：
-
-- 上游：同时支持 ROS1 和 ROS2，并包含历史 TurtleAgent demo。
-- 本 fork：删除 ROS1 和其他模型 provider，保留 ROS2 agent 工具链，默认面向 Codex Responses API。
-
-如果需要查看上游原始功能、历史演示、Wiki 或完整项目背景，请直接看 [NASA JPL ROSA 原仓库](https://github.com/nasa-jpl/rosa)。
 
 ## 许可证
 
-本项目继承上游 ROSA 的许可证。详情见 [LICENSE](LICENSE)。
+本项目继承 ROSA 的许可证。详情见 [LICENSE](LICENSE)。
