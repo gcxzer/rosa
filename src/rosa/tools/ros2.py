@@ -18,28 +18,33 @@ import subprocess
 import time
 from typing import List, Optional, Tuple
 
-from langchain.agents import tool
-from rclpy.logging import get_logging_directory
+from langchain_core.tools import tool
+try:
+    from rclpy.logging import get_logging_directory
+except ModuleNotFoundError:
+    # 本项目的 ROS2 工具主要通过 `ros2` CLI 工作；本地单元测试会 mock CLI 调用。
+    # 如果当前机器没有安装 rclpy，仍允许模块被导入，只在日志目录查询时使用通用默认路径。
+    get_logging_directory = None
 
 
 def execute_ros_command(command: str) -> Tuple[bool, str]:
     """
-    Execute a ROS2 command.
+    执行 ROS2 命令。
 
-    :param command: The ROS2 command to execute.
-    :return: A tuple containing a boolean indicating success and the output of the command.
+    :param command: 需要执行的 ROS2 命令。
+    :return: 二元组，第一个值表示是否成功，第二个值是命令输出。
     """
 
-    # Validate the command is a proper ROS2 command
+    # 校验传入命令是否是允许执行的 ROS2 命令。
     cmd = command.split(" ")
     valid_ros2_commands = ["node", "topic", "service", "param", "doctor"]
 
     if len(cmd) < 2:
-        raise ValueError(f"'{command}' is not a valid ROS2 command.")
+        raise ValueError(f"'{command}' 不是有效的 ROS2 命令。")
     if cmd[0] != "ros2":
-        raise ValueError(f"'{command}' is not a valid ROS2 command.")
+        raise ValueError(f"'{command}' 不是有效的 ROS2 命令。")
     if cmd[1] not in valid_ros2_commands:
-        raise ValueError(f"'ros2 {cmd[1]}' is not a valid ros2 subcommand.")
+        raise ValueError(f"'ros2 {cmd[1]}' 不是有效的 ros2 子命令。")
 
     try:
         output = subprocess.check_output(command, shell=True).decode()
@@ -55,11 +60,11 @@ def get_entities(
     blacklist: Optional[List[str]] = None,
 ) -> List[str]:
     """
-    Get a list of ROS2 entities (nodes, topics, services, etc.).
+    获取 ROS2 实体列表，例如 node、topic、service 等。
 
-    :param cmd: the ROS2 command to execute.
-    :param delimiter: The delimiter to split the output by.
-    :param pattern: A regular expression pattern to filter the list of entities.
+    :param cmd: 需要执行的 ROS2 命令。
+    :param delimiter: 用于切分命令输出的分隔符。
+    :param pattern: 用于过滤实体列表的正则表达式。
     :return:
     """
     success, output = execute_ros_command(cmd)
@@ -69,7 +74,7 @@ def get_entities(
 
     entities = output.split(delimiter)
 
-    # Filter out blacklisted entities
+    # 过滤命中黑名单的实体。
     if blacklist:
         entities = list(
             filter(
@@ -91,9 +96,9 @@ def get_entities(
 @tool
 def ros2_node_list(pattern: Optional[str] = None, blacklist: Optional[List[str]] = None) -> dict:
     """
-    Get a list of ROS2 nodes running on the system.
+    获取系统中正在运行的 ROS2 node 列表。
 
-    :param pattern: A regular expression pattern to filter the list of nodes.
+    :param pattern: 用于过滤 node 列表的正则表达式。
     """
     cmd = "ros2 node list"
     nodes = get_entities(cmd, pattern=pattern, blacklist=blacklist)
@@ -103,9 +108,9 @@ def ros2_node_list(pattern: Optional[str] = None, blacklist: Optional[List[str]]
 @tool
 def ros2_topic_list(pattern: Optional[str] = None, blacklist: Optional[List[str]] = None) -> dict:
     """
-    Get a list of ROS2 topics.
+    获取 ROS2 topic 列表。
 
-    :param pattern: A regular expression pattern to filter the list of topics.
+    :param pattern: 用于过滤 topic 列表的正则表达式。
     """
     cmd = "ros2 topic list"
     topics = get_entities(cmd, pattern=pattern, blacklist=blacklist)
@@ -121,21 +126,21 @@ def ros2_topic_echo(
     timeout: float = 1.0,
 ) -> dict:
     """
-    Echoes the contents of a specific ROS2 topic.
+    echo 指定 ROS2 topic 的内容。
 
-    :param topic: The name of the ROS topic to echo.
-    :param count: The number of messages to echo. Valid range is 1-10.
-    :param return_echoes: If True, return the messages as a list with the response.
-    :param delay: Time to wait between each message in seconds.
-    :param timeout: Max time to wait for a message before timing out.
+    :param topic: 需要 echo 的 ROS topic 名称。
+    :param count: 需要 echo 的消息数量。有效范围是 1-10。
+    :param return_echoes: 如果为 True，则在响应中以列表形式返回消息。
+    :param delay: 每条消息之间的等待时间，单位为秒。
+    :param timeout: 等待消息的最长时间，超时后停止等待，单位为秒。
 
-    :note: Do not set return_echoes to True if the number of messages is large.
-           This will cause the response to be too large and may cause the tool to fail.
+    :note: 如果消息数量很大，不要将 return_echoes 设置为 True。
+           这会导致响应过大，并可能使工具执行失败。
     """
     cmd = f"ros2 topic echo {topic} --once --spin-time {timeout}"
 
     if count < 1 or count > 10:
-        return {"error": "Count must be between 1 and 10."}
+        return {"error": "count 必须在 1 到 10 之间。"}
 
     echoes = []
     for i in range(count):
@@ -161,9 +166,9 @@ def ros2_service_list(
     pattern: Optional[str] = None, blacklist: Optional[List[str]] = None
 ) -> dict:
     """
-    Get a list of ROS2 services.
+    获取 ROS2 service 列表。
 
-    :param pattern: A regular expression pattern to filter the list of services.
+    :param pattern: 用于过滤 service 列表的正则表达式。
     """
     cmd = "ros2 service list"
     services = get_entities(cmd, pattern=pattern, blacklist=blacklist)
@@ -173,9 +178,9 @@ def ros2_service_list(
 @tool
 def ros2_node_info(nodes: List[str]) -> dict:
     """
-    Get information about a ROS2 node.
+    获取 ROS2 node 的信息。
 
-    :param node_name: The name of the ROS2 node.
+    :param node_name: ROS2 node 名称。
     """
     data = {}
 
@@ -194,9 +199,9 @@ def ros2_node_info(nodes: List[str]) -> dict:
 @tool
 def ros2_topic_info(topics: List[str]) -> dict:
     """
-    Get information about a ROS2 topic.
+    获取 ROS2 topic 的信息。
 
-    :param topic_name: The name of the ROS2 topic.
+    :param topic_name: ROS2 topic 名称。
     """
     data = {}
 
@@ -220,10 +225,10 @@ def ros2_param_list(
     blacklist: Optional[List[str]] = None,
 ) -> dict:
     """
-    Get a list of parameters for a ROS2 node.
+    获取 ROS2 node 的 parameter 列表。
 
-    :param node_name: An optional ROS2 node name to get parameters for. If not provided, all parameters are listed.
-    :param pattern: A regular expression pattern to filter the list of parameters.
+    :param node_name: 可选的 ROS2 node 名称；如果提供，则只获取该 node 的 parameter。未提供时列出所有 parameter。
+    :param pattern: 用于过滤 parameter 列表的正则表达式。
     """
     if node_name:
         cmd = f"ros2 param list {node_name}"
@@ -246,8 +251,8 @@ def ros2_param_list(
         if not success:
             return {"error": output}
 
-        # When we get a list of all nodes params, we have to parse it
-        # The node name starts with a '/' and the params are indented
+        # 获取所有 node 的 parameter 列表时，需要手动解析命令输出。
+        # node 名称以 '/' 开头，其下方的 parameter 行会带缩进。
         lines = output.split("\n")
         data = {}
         current_node = None
@@ -272,10 +277,10 @@ def ros2_param_list(
 @tool
 def ros2_param_get(node_name: str, param_name: str) -> dict:
     """
-    Get the value of a parameter for a ROS2 node.
+    获取 ROS2 node 上某个 parameter 的值。
 
-    :param node_name: The name of the ROS2 node.
-    :param param_name: The name of the parameter.
+    :param node_name: ROS2 node 名称。
+    :param param_name: parameter 名称。
     """
     cmd = f"ros2 param get {node_name} {param_name}"
     success, output = execute_ros_command(cmd)
@@ -289,11 +294,11 @@ def ros2_param_get(node_name: str, param_name: str) -> dict:
 @tool
 def ros2_param_set(node_name: str, param_name: str, param_value: str) -> dict:
     """
-    Set the value of a parameter for a ROS2 node.
+    设置 ROS2 node 上某个 parameter 的值。
 
-    :param node_name: The name of the ROS2 node.
-    :param param_name: The name of the parameter.
-    :param param_value: The value to set the parameter to.
+    :param node_name: ROS2 node 名称。
+    :param param_name: parameter 名称。
+    :param param_value: 要写入该 parameter 的值。
     """
     cmd = f"ros2 param set {node_name} {param_name} {param_value}"
     success, output = execute_ros_command(cmd)
@@ -307,9 +312,9 @@ def ros2_param_set(node_name: str, param_name: str, param_value: str) -> dict:
 @tool
 def ros2_service_info(services: List[str]) -> dict:
     """
-    Get information about a ROS2 service.
+    获取 ROS2 service 的信息。
 
-    :param services: a list of ROS2 service names.
+    :param services: ROS2 service 名称列表。
     """
     data = {}
 
@@ -329,11 +334,11 @@ def ros2_service_info(services: List[str]) -> dict:
 @tool
 def ros2_service_call(service_name: str, srv_type: str, request: str) -> dict:
     """
-    Call a ROS2 service.
+    调用 ROS2 service。
 
-    :param service_name: The name of the ROS2 service.
-    :param srv_type: The type of the service (use ros2_service_info to verify).
-    :param request: The request to send to the service.
+    :param service_name: ROS2 service 名称。
+    :param srv_type: service 类型，请使用 ros2_service_info 验证。
+    :param request: 发送给 service 的请求内容。
     """
     cmd = f'ros2 service call {service_name} {srv_type} "{request}"'
     success, output = execute_ros_command(cmd)
@@ -345,7 +350,7 @@ def ros2_service_call(service_name: str, srv_type: str, request: str) -> dict:
 @tool
 def ros2_doctor() -> dict:
     """
-    Check ROS setup and other potential issues.
+    检查 ROS 配置和其他潜在问题。
     """
     cmd = "ros2 doctor"
     success, output = execute_ros_command(cmd)
@@ -355,9 +360,12 @@ def ros2_doctor() -> dict:
 
 
 def ros2_log_directories():
-    """Get any available ROS2 log directories."""
-    log_dir = get_logging_directory()
-    print(f"ROS 2 logs are stored in: {log_dir}")
+    """获取所有可用的 ROS2 日志目录。"""
+    if get_logging_directory is None:
+        log_dir = os.path.join(os.path.expanduser("~"), ".ros", "log")
+    else:
+        log_dir = get_logging_directory()
+    print(f"ROS 2 日志存储在：{log_dir}")
 
     return {"default": f"{log_dir}"}
 
@@ -365,9 +373,9 @@ def ros2_log_directories():
 @tool
 def roslog_list(min_size: int = 2048, blacklist: Optional[List[str]] = None) -> dict:
     """
-    Returns a list of ROS log files.
+    返回 ROS 日志文件列表。
 
-    :param min_size: The minimum size of the log file in bytes to include in the list.
+    :param min_size: 日志文件被纳入列表所需的最小大小，单位为字节。
     """
 
     logs = []
@@ -377,16 +385,16 @@ def roslog_list(min_size: int = 2048, blacklist: Optional[List[str]] = None) -> 
         if not log_dir:
             continue
 
-        # Get all .log files in the directory
+        # 获取目录中的所有 .log 文件。
         log_files = [
             os.path.join(log_dir, f)
             for f in os.listdir(log_dir)
             if os.path.isfile(os.path.join(log_dir, f)) and f.endswith(".log")
         ]
 
-        print(f"Log files: {log_files}")
+        print(f"日志文件：{log_files}")
 
-        # Filter out blacklisted files
+        # 过滤命中黑名单的文件。
         if blacklist:
             log_files = list(
                 filter(
@@ -397,10 +405,10 @@ def roslog_list(min_size: int = 2048, blacklist: Optional[List[str]] = None) -> 
                 )
             )
 
-        # Filter out files that are too small
+        # 过滤过小的文件。
         log_files = list(filter(lambda x: os.path.getsize(x) > min_size, log_files))
 
-        # Get the size of each log file in KB or MB if it's larger than 1 MB
+        # 获取每个日志文件的大小；小于 1 MB 时用 KB 表示，否则用 MB 表示。
         log_files = [
             {
                 f.replace(log_dir, ""): (

@@ -16,18 +16,18 @@ import math
 import statistics
 from typing import List
 
-from langchain.agents import tool
+from langchain_core.tools import tool
 
 
 @tool
 def add_all(numbers: List[float]) -> float:
-    """Returns the sum of a list of numbers."""
+    """返回一组数字的总和。"""
     return sum(numbers)
 
 
 @tool
 def multiply_all(numbers: List[float]) -> float:
-    """Returns the product of a list of numbers."""
+    """返回一组数字的乘积。"""
     result = 1
     for number in numbers:
         result *= number
@@ -36,7 +36,7 @@ def multiply_all(numbers: List[float]) -> float:
 
 @tool
 def mean(numbers: List[float]) -> dict:
-    """Returns the mean of a list of numbers."""
+    """返回一组数字的均值和标准差。"""
     return {
         "mean": statistics.mean(numbers),
         "stdev": statistics.stdev(numbers),
@@ -45,27 +45,27 @@ def mean(numbers: List[float]) -> dict:
 
 @tool
 def median(numbers: List[float]) -> float:
-    """Returns the median of a list of numbers."""
+    """返回一组数字的中位数。"""
     return statistics.median(numbers)
 
 
 @tool
 def mode(numbers: List[float]) -> List[float]:
-    """Returns the mode of a list of numbers."""
+    """返回一组数字的众数。"""
     return statistics.mode(numbers)
 
 
 @tool
 def variance(numbers: List[float]) -> float:
-    """Returns the variance of a list of numbers."""
+    """返回一组数字的方差。"""
     return statistics.variance(numbers)
 
 
 @tool
 def add(xy_pairs: List[tuple]) -> List[dict]:
-    """Performs addition on the input values x and y.
+    """对输入的 x 和 y 执行加法。
 
-    :arg xy_pairs: A list of tuples containing the input values x and y (e.g. [(x1, y1), (x2, y2), ...])
+    :arg xy_pairs: 包含输入值 x 和 y 的元组列表，例如 [(x1, y1), (x2, y2), ...]。
     """
     results = []
     for x, y in xy_pairs:
@@ -78,9 +78,9 @@ def add(xy_pairs: List[tuple]) -> List[dict]:
 
 @tool
 def subtract(xy_pairs: List[tuple]) -> List[dict]:
-    """Performs subtraction on the input values x and y.
+    """对输入的 x 和 y 执行减法。
 
-    :arg xy_pairs: A list of tuples containing the input values x and y (e.g. [(x1, y1), (x2, y2), ...])
+    :arg xy_pairs: 包含输入值 x 和 y 的元组列表，例如 [(x1, y1), (x2, y2), ...]。
     """
     results = []
     for x, y in xy_pairs:
@@ -93,9 +93,9 @@ def subtract(xy_pairs: List[tuple]) -> List[dict]:
 
 @tool
 def multiply(xy_pairs: List[tuple]) -> List[dict]:
-    """Performs multiplication on the input values x and y.
+    """对输入的 x 和 y 执行乘法。
 
-    :arg xy_pairs: A list of tuples containing the input values x and y (e.g. [(x1, y1), (x2, y2), ...])
+    :arg xy_pairs: 包含输入值 x 和 y 的元组列表，例如 [(x1, y1), (x2, y2), ...]。
     """
     results = []
     for x, y in xy_pairs:
@@ -108,9 +108,9 @@ def multiply(xy_pairs: List[tuple]) -> List[dict]:
 
 @tool
 def divide(xy_pairs: List[tuple]) -> List[dict]:
-    """Performs division on the input values x and y.
+    """对输入的 x 和 y 执行除法。
 
-    :arg xy_pairs: A list of tuples containing the input values x and y (e.g. [(x1, y1), (x2, y2), ...])
+    :arg xy_pairs: 包含输入值 x 和 y 的元组列表，例如 [(x1, y1), (x2, y2), ...]。
     """
     results = []
     for x, y in xy_pairs:
@@ -123,9 +123,9 @@ def divide(xy_pairs: List[tuple]) -> List[dict]:
 
 @tool
 def exponentiate(xy_pairs: List[tuple]) -> List[dict]:
-    """Performs exponentiation on the input values x and y.
+    """对输入的 x 和 y 执行幂运算。
 
-    :arg xy_pairs: A list of tuples containing the input values x and y (e.g. [(x1, y1), (x2, y2), ...])
+    :arg xy_pairs: 包含输入值 x 和 y 的元组列表，例如 [(x1, y1), (x2, y2), ...]。
     """
     results = []
     for x, y in xy_pairs:
@@ -138,9 +138,9 @@ def exponentiate(xy_pairs: List[tuple]) -> List[dict]:
 
 @tool
 def modulo(xy_pairs: List[tuple]) -> List[dict]:
-    """Performs modulo on the input values x and y.
+    """对输入的 x 和 y 执行取模运算。
 
-    :arg xy_pairs: A list of tuples containing the input values x and y (e.g. [(x1, y1), (x2, y2), ...])
+    :arg xy_pairs: 包含输入值 x 和 y 的元组列表，例如 [(x1, y1), (x2, y2), ...]。
     """
     results = []
     for x, y in xy_pairs:
@@ -153,9 +153,9 @@ def modulo(xy_pairs: List[tuple]) -> List[dict]:
 
 @tool
 def sine(x_values: List[float]) -> List[dict]:
-    """Performs sine on the input values x.
+    """对输入值 x 执行正弦计算。
 
-    :arg x_values: A list of values x (e.g. [x1, x2, ...])
+    :arg x_values: x 值列表，例如 [x1, x2, ...]。
     """
     results = []
     for x in x_values:
@@ -168,9 +168,9 @@ def sine(x_values: List[float]) -> List[dict]:
 
 @tool
 def cosine(x_values: List[float]) -> List[dict]:
-    """Performs cosine on the input values x.
+    """对输入值 x 执行余弦计算。
 
-    :arg x_values: A list of values x (e.g. [x1, x2, ...])
+    :arg x_values: x 值列表，例如 [x1, x2, ...]。
     """
     results = []
     for x in x_values:
@@ -183,9 +183,9 @@ def cosine(x_values: List[float]) -> List[dict]:
 
 @tool
 def tangent(x_values: List[float]) -> List[dict]:
-    """Performs tangent on the input values x.
+    """对输入值 x 执行正切计算。
 
-    :arg x_values: A list of values x (e.g. [x1, x2, ...])
+    :arg x_values: x 值列表，例如 [x1, x2, ...]。
     """
     results = []
     for x in x_values:
@@ -198,9 +198,9 @@ def tangent(x_values: List[float]) -> List[dict]:
 
 @tool
 def asin(x_values: List[float]) -> List[dict]:
-    """Performs arcsine on the input values x.
+    """对输入值 x 执行反正弦计算。
 
-    :arg x_values: A list of values x (e.g. [x1, x2, ...])
+    :arg x_values: x 值列表，例如 [x1, x2, ...]。
     """
     results = []
     for x in x_values:
@@ -218,9 +218,9 @@ def asin(x_values: List[float]) -> List[dict]:
 
 @tool
 def acos(x_values: List[float]) -> List[dict]:
-    """Performs arccosine on the input values x.
+    """对输入值 x 执行反余弦计算。
 
-    :arg x_values: A list of values x (e.g. [x1, x2, ...])
+    :arg x_values: x 值列表，例如 [x1, x2, ...]。
     """
     results = []
     for x in x_values:
@@ -239,14 +239,14 @@ def acos(x_values: List[float]) -> List[dict]:
 @tool
 def atan(x_values: List[float]) -> List[dict]:
     """
-    Calculate arctangent (inverse tangent) of input values. Returns angle in radians.
-    Use this to find an angle from a slope (rise/run).
+    计算输入值的反正切，返回弧度制角度。
+    当你需要根据斜率（rise/run）求角度时，可以使用这个工具。
     
-    For finding angle from point A to point B, use atan2 instead (it's better).
+    如果要计算从点 A 到点 B 的方向角，应优先使用 atan2，因为它更适合该场景。
     
-    Example: atan(1) = π/4 ≈ 0.785 radians = 45 degrees
+    示例：atan(1) = π/4 ≈ 0.785 弧度 = 45 度。
 
-    :arg x_values: A list of values x (e.g. [x1, x2, ...])
+    :arg x_values: x 值列表，例如 [x1, x2, ...]。
     """
     results = []
     for x in x_values:
@@ -259,9 +259,9 @@ def atan(x_values: List[float]) -> List[dict]:
 
 @tool
 def sinh(x_values: List[float]) -> List[dict]:
-    """Performs hyperbolic sine on the input values x.
+    """对输入值 x 执行双曲正弦计算。
 
-    :arg x_values: A list of values x (e.g. [x1, x2, ...])
+    :arg x_values: x 值列表，例如 [x1, x2, ...]。
     """
     results = []
     for x in x_values:
@@ -274,9 +274,9 @@ def sinh(x_values: List[float]) -> List[dict]:
 
 @tool
 def cosh(x_values: List[float]) -> List[dict]:
-    """Performs hyperbolic cosine on the input values x.
+    """对输入值 x 执行双曲余弦计算。
 
-    :arg x_values: A list of values x (e.g. [x1, x2, ...])
+    :arg x_values: x 值列表，例如 [x1, x2, ...]。
     """
     results = []
     for x in x_values:
@@ -289,9 +289,9 @@ def cosh(x_values: List[float]) -> List[dict]:
 
 @tool
 def tanh(x_values: List[float]) -> List[dict]:
-    """Performs hyperbolic tangent on the input values x.
+    """对输入值 x 执行双曲正切计算。
 
-    :arg x_values: A list of values x (e.g. [x1, x2, ...])
+    :arg x_values: x 值列表，例如 [x1, x2, ...]。
     """
     results = []
     for x in x_values:
@@ -304,28 +304,28 @@ def tanh(x_values: List[float]) -> List[dict]:
 
 @tool
 def count_list(items: List) -> int:
-    """Returns the number of items in a list."""
+    """返回列表中的元素数量。"""
     return len(items)
 
 
 @tool
 def count_words(text: str) -> int:
-    """Returns the number of words in a string."""
+    """返回字符串中的单词数量。"""
     return len(text.split())
 
 
 @tool
 def count_lines(text: str) -> int:
-    """Returns the number of lines in a string."""
+    """返回字符串中的行数。"""
     return len(text.split("\n"))
 
 
 @tool
 def degrees_to_radians(degrees: List[float]):
     """
-    Convert degrees to radians. Use this for angle conversions.
+    将角度从度转换为弧度。需要做角度单位转换时使用它。
 
-    :param degrees: A list of one or more degrees to convert to radians.
+    :param degrees: 一个或多个需要转换为弧度的度数。
     """
     rads = {}
     for degree in degrees:
@@ -336,9 +336,9 @@ def degrees_to_radians(degrees: List[float]):
 @tool
 def radians_to_degrees(radians: List[float]):
     """
-    Convert radians to degrees. Use this for angle conversions.
+    将角度从弧度转换为度。需要做角度单位转换时使用它。
 
-    :param radians: A list of one or more radians to convert to degrees.
+    :param radians: 一个或多个需要转换为度的弧度值。
     """
     degs = {}
     for radian in radians:
@@ -349,14 +349,14 @@ def radians_to_degrees(radians: List[float]):
 @tool
 def sqrt(x_values: List[float]) -> List[dict]:
     """
-    Calculate the square root of input values. Essential for distance calculations.
+    计算输入值的平方根。距离计算中经常需要使用该工具。
 
-    :arg x_values: A list of values x (e.g. [x1, x2, ...])
+    :arg x_values: x 值列表，例如 [x1, x2, ...]。
     """
     results = []
     for x in x_values:
         if x < 0:
-            result = {f"sqrt({x})": "undefined (negative number)"}
+            result = {f"sqrt({x})": "未定义（负数）"}
         else:
             result = {f"sqrt({x})": math.sqrt(x)}
         results.append(result)
@@ -366,15 +366,15 @@ def sqrt(x_values: List[float]) -> List[dict]:
 @tool
 def atan2(pairs: List[tuple]) -> List[dict]:
     """
-    Calculate the angle (in radians) from the positive x-axis to the point (x, y).
-    This is the MOST IMPORTANT tool for calculating angles between two points.
+    计算从 x 轴正方向到点 (x, y) 的角度，结果为弧度。
+    这是计算两点之间方向角时最重要的工具。
     
-    To find the angle from point (x1, y1) to point (x2, y2):
-    Use atan2(y2-y1, x2-x1)
+    如果要计算从点 (x1, y1) 到点 (x2, y2) 的角度：
+    使用 atan2(y2-y1, x2-x1)。
     
-    Example: angle from (1, 1) to (3, 4) = atan2(4-1, 3-1) = atan2(3, 2) ≈ 0.98 radians
+    示例：从 (1, 1) 到 (3, 4) 的角度 = atan2(4-1, 3-1) = atan2(3, 2) ≈ 0.98 弧度。
 
-    :arg pairs: A list of tuples containing (y, x) values in that order, e.g., [(y1, x1), (y2, x2), ...]
+    :arg pairs: 元组列表，每个元组按 (y, x) 顺序提供值，例如 [(y1, x1), (y2, x2), ...]。
     """
     results = []
     for y, x in pairs:
@@ -386,20 +386,20 @@ def atan2(pairs: List[tuple]) -> List[dict]:
 @tool
 def distance_between_points(point_pairs: List[tuple]) -> List[dict]:
     """
-    Calculate the straight-line distance between two points using the Pythagorean theorem.
-    Formula: sqrt((x2-x1)^2 + (y2-y1)^2)
+    使用勾股定理计算两点之间的直线距离。
+    公式：sqrt((x2-x1)^2 + (y2-y1)^2)。
     
-    This is essential for determining how far the turtle needs to move.
+    该工具对于确定 turtle 需要移动多远非常重要。
 
-    :arg point_pairs: A list of tuples, each containing ((x1, y1), (x2, y2))
-    Example: [((0, 0), (3, 4))] calculates distance from (0,0) to (3,4) = 5.0
+    :arg point_pairs: 元组列表，每个元素格式为 ((x1, y1), (x2, y2))。
+    示例：[((0, 0), (3, 4))] 会计算从 (0,0) 到 (3,4) 的距离，结果为 5.0。
     """
     results = []
     for (x1, y1), (x2, y2) in point_pairs:
         dx = x2 - x1
         dy = y2 - y1
         dist = math.sqrt(dx**2 + dy**2)
-        result = {f"distance from ({x1},{y1}) to ({x2},{y2})": dist}
+        result = {f"从 ({x1},{y1}) 到 ({x2},{y2}) 的距离": dist}
         results.append(result)
     return results
 
@@ -407,14 +407,14 @@ def distance_between_points(point_pairs: List[tuple]) -> List[dict]:
 @tool
 def calculate_line_angle_and_distance(point_pairs: List[tuple]) -> List[dict]:
     """
-    Calculate BOTH the angle (in radians) and distance needed to draw a line from point A to point B.
-    This is a high-level helper that combines atan2 and distance calculations.
+    同时计算从点 A 到点 B 画线所需的角度（弧度）和距离。
+    这是一个组合了 atan2 和距离计算的高层辅助工具。
     
-    Use this when planning to draw a line between two specific coordinates.
-    The angle returned is relative to the positive x-axis (right = 0, up = π/2).
+    当你计划在两个具体坐标之间画线时，应使用该工具。
+    返回角度相对于 x 轴正方向（向右 = 0，向上 = π/2）。
 
-    :arg point_pairs: A list of tuples, each containing ((x1, y1), (x2, y2))
-    Example: [((2, 3), (5, 7))] returns angle and distance from (2,3) to (5,7)
+    :arg point_pairs: 元组列表，每个元素格式为 ((x1, y1), (x2, y2))。
+    示例：[((2, 3), (5, 7))] 返回从 (2,3) 到 (5,7) 的角度和距离。
     """
     results = []
     for (x1, y1), (x2, y2) in point_pairs:
@@ -423,7 +423,7 @@ def calculate_line_angle_and_distance(point_pairs: List[tuple]) -> List[dict]:
         angle = math.atan2(dy, dx)
         distance = math.sqrt(dx**2 + dy**2)
         result = {
-            f"line from ({x1},{y1}) to ({x2},{y2})": {
+            f"从 ({x1},{y1}) 到 ({x2},{y2}) 的线段": {
                 "angle_radians": angle,
                 "angle_degrees": angle * (180 / math.pi),
                 "distance": distance,

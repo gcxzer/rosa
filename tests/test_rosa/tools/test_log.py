@@ -31,8 +31,7 @@ class TestReadLog(unittest.TestCase):
         )
         self.assertEqual(
             result["error"],
-            "The log directory '/invalid/directory' does not exist. You should first use your tools to get the "
-            "correct log directory.",
+            "日志目录 '/invalid/directory' 不存在。你应该先使用工具获取正确的日志目录。",
         )
 
     @patch("os.path.exists")
@@ -47,7 +46,7 @@ class TestReadLog(unittest.TestCase):
             )
             self.assertEqual(
                 result["error"],
-                "The path '/valid/directory/logfile.log' is not a file.",
+                "路径 '/valid/directory/logfile.log' 不是文件。",
             )
 
     @patch(
@@ -65,7 +64,7 @@ class TestReadLog(unittest.TestCase):
                 "level_filter": "ERROR",
             }
         )
-        self.assertEqual(result["lines"], ["line 2: ERROR: line 2"])
+        self.assertEqual(result["lines"], ["第 2 行： ERROR: line 2"])
 
     @patch(
         "builtins.open",
@@ -83,7 +82,7 @@ class TestReadLog(unittest.TestCase):
             }
         )
         self.assertEqual(
-            result["lines"], ["line 2: ERROR: line 2", "line 3: DEBUG: line 3"]
+            result["lines"], ["第 2 行： ERROR: line 2", "第 3 行： DEBUG: line 3"]
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data="INFO: line 1\n" * 202)
@@ -99,8 +98,7 @@ class TestReadLog(unittest.TestCase):
         )
         self.assertEqual(
             result["error"],
-            "The log file 'logfile.log' has more than 200 lines. Please use the `num_lines` argument to read a subset "
-            "of the log file at a time.",
+            "日志文件 'logfile.log' 超过 200 行。请使用 `num_lines` 参数，每次只读取日志文件的一部分。",
         )
 
     @patch(
@@ -119,7 +117,11 @@ class TestReadLog(unittest.TestCase):
         )
         self.assertEqual(
             result["lines"],
-            ["line 1: INFO: line 1", "line 2: ERROR: line 2", "line 3: DEBUG: line 3"],
+            [
+                "第 1 行： INFO: line 1",
+                "第 2 行： ERROR: line 2",
+                "第 3 行： DEBUG: line 3",
+            ],
         )
 
     @patch("os.path.exists", return_value=True)
@@ -139,7 +141,7 @@ class TestReadLog(unittest.TestCase):
             )
             self.assertEqual(
                 result["error"],
-                "Invalid `num_lines` argument. It must be a positive integer.",
+                "`num_lines` 参数无效。它必须是一个正整数。",
             )
 
     @patch("os.path.exists", return_value=True)

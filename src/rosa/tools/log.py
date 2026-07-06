@@ -15,7 +15,7 @@
 import os
 from typing import Optional, Literal
 
-from langchain.agents import tool
+from langchain_core.tools import tool
 
 
 @tool
@@ -28,31 +28,30 @@ def read_log(
     num_lines: Optional[int] = None,
 ) -> dict:
     """
-    Read a log file and return the log lines that match the level filter and line range.
+    读取日志文件，并返回符合日志级别过滤条件和行数范围的日志行。
 
-    :param log_file_directory: The directory containing the log file to read (use your tools to get it)
-    :param log_filename: The path to the log file to read
-    :param level_filter: Only show log lines that contain this level (e.g. "ERROR", "INFO", "DEBUG", etc.)
-    :param num_lines: The number of most recent lines to return from the log file
+    :param log_file_directory: 包含待读取日志文件的目录，请先使用工具获取正确目录。
+    :param log_filename: 需要读取的日志文件路径。
+    :param level_filter: 只显示包含该日志级别的行，例如 "ERROR"、"INFO"、"DEBUG" 等。
+    :param num_lines: 从日志文件末尾返回的最近行数。
     """
     if num_lines is not None and num_lines < 1:
-        return {"error": "Invalid `num_lines` argument. It must be a positive integer."}
+        return {"error": "`num_lines` 参数无效。它必须是一个正整数。"}
 
     if not os.path.exists(log_file_directory):
         return {
-            "error": f"The log directory '{log_file_directory}' does not exist. You should first use your tools to "
-            f"get the correct log directory."
+            "error": f"日志目录 '{log_file_directory}' 不存在。你应该先使用工具获取正确的日志目录。"
         }
 
     full_log_path = os.path.join(log_file_directory, log_filename)
 
     if not os.path.exists(full_log_path):
         return {
-            "error": f"The log file '{log_filename}' does not exist in the log directory '{log_file_directory}'."
+            "error": f"日志文件 '{log_filename}' 不存在于日志目录 '{log_file_directory}' 中。"
         }
 
     if not os.path.isfile(full_log_path):
-        return {"error": f"The path '{full_log_path}' is not a file."}
+        return {"error": f"路径 '{full_log_path}' 不是文件。"}
 
     with open(full_log_path, "r") as f:
         log_lines = f.readlines()
@@ -60,17 +59,16 @@ def read_log(
     total_lines = len(log_lines)
 
     for i in range(len(log_lines)):
-        log_lines[i] = f"line {i+1}: " + log_lines[i].strip()
+        log_lines[i] = f"第 {i+1} 行： " + log_lines[i].strip()
 
     if num_lines is not None:
-        # Get the most recent num_lines from the log file
+        # 从日志文件末尾取出最近的 num_lines 行。
         log_lines = log_lines[-num_lines:]
 
-    # If there are more than 200 lines, return a message to use the line_range argument
+    # 如果日志行数超过 200 行，提示调用者使用 num_lines 参数分批读取。
     if len(log_lines) > 200:
         return {
-            "error": f"The log file '{log_filename}' has more than 200 lines. Please use the `num_lines` argument to "
-            f"read a subset of the log file at a time."
+            "error": f"日志文件 '{log_filename}' 超过 200 行。请使用 `num_lines` 参数，每次只读取日志文件的一部分。"
         }
 
     if level_filter is not None:

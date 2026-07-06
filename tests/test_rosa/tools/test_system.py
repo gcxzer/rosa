@@ -24,19 +24,19 @@ class TestSystemTools(unittest.TestCase):
 
     def test_sets_verbosity_to_true(self):
         result = set_verbosity.invoke({"enable_verbose_messages": True})
-        self.assertEqual(result, "Verbose messages are now enabled.")
+        self.assertEqual(result, "verbose 详细信息现在已启用。")
         self.assertTrue(get_verbose())
         result = set_verbosity.invoke({"enable_verbose_messages": False})
-        self.assertEqual(result, "Verbose messages are now disabled.")
+        self.assertEqual(result, "verbose 详细信息现在已禁用。")
         self.assertFalse(get_verbose())
 
     def test_sets_debug_to_true(self):
         result = set_debugging.invoke({"enable_debug_messages": True})
-        self.assertEqual(result, "Debug messages are now enabled.")
+        self.assertEqual(result, "debug 调试信息现在已启用。")
         self.assertTrue(get_debug())
         set_debug(False)
         result = set_debugging.invoke({"enable_debug_messages": False})
-        self.assertEqual(result, "Debug messages are now disabled.")
+        self.assertEqual(result, "debug 调试信息现在已禁用。")
         self.assertFalse(get_debug())
 
     def test_waits_for_specified_seconds(self):
@@ -44,7 +44,7 @@ class TestSystemTools(unittest.TestCase):
         result = wait.invoke({"seconds": 1.0})
         end = time.time()
 
-        self.assertTrue(result.startswith("Waited exactly"))
+        self.assertTrue(result.startswith("已准确等待"))
         self.assertAlmostEqual(end - start, 1.0, places=1)
 
     def test_waits_for_zero_seconds(self):
@@ -52,7 +52,7 @@ class TestSystemTools(unittest.TestCase):
         result = wait.invoke({"seconds": 0})
         end = time.time()
 
-        self.assertTrue(result.startswith("Waited exactly"))
+        self.assertTrue(result.startswith("已准确等待"))
         self.assertAlmostEqual(end - start, 0.0, places=1)
 
 

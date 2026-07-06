@@ -12,31 +12,23 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import os
 import subprocess
 import unittest
 from unittest.mock import patch
 
-try:
-    from src.rosa.tools.ros2 import (
-        execute_ros_command,
-        ros2_node_list,
-        ros2_topic_list,
-        ros2_topic_echo,
-        ros2_service_list,
-        ros2_node_info,
-        ros2_param_list,
-        ros2_param_get,
-        ros2_param_set,
-    )
-except ModuleNotFoundError:
-    pass
-
-
-@unittest.skipIf(
-    os.environ.get("ROS_VERSION") == "1",
-    "Skipping ROS2 tests because ROS_VERSION is set to 1",
+from src.rosa.tools.ros2 import (
+    execute_ros_command,
+    ros2_node_list,
+    ros2_topic_list,
+    ros2_topic_echo,
+    ros2_service_list,
+    ros2_node_info,
+    ros2_param_list,
+    ros2_param_get,
+    ros2_param_set,
 )
+
+
 class TestROS2Tools(unittest.TestCase):
 
     @patch("src.rosa.tools.ros2.subprocess.check_output")
@@ -144,7 +136,7 @@ class TestROS2Tools(unittest.TestCase):
     @patch("src.rosa.tools.ros2.execute_ros_command")
     def test_ros2_topic_echo_invalid_count(self, mock_execute):
         result = ros2_topic_echo.invoke({"topic": "/example_topic", "count": 11})
-        self.assertEqual(result, {"error": "Count must be between 1 and 10."})
+        self.assertEqual(result, {"error": "count 必须在 1 到 10 之间。"})
 
     @patch("src.rosa.tools.ros2.execute_ros_command")
     def test_ros2_topic_echo_command_failure(self, mock_execute):
@@ -284,7 +276,4 @@ class TestROS2Tools(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    import os
-
-    if os.environ.get("ROS_VERSION") == 2:
-        unittest.main()
+    unittest.main()

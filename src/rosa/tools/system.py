@@ -14,44 +14,44 @@
 
 import time
 
-from langchain.agents import tool
 from langchain.globals import set_debug, set_verbose
+from langchain_core.tools import tool
 
 
 @tool
 def set_verbosity(enable_verbose_messages: bool) -> str:
-    """Sets the verbosity of the agent to enable or disable verbose messages.
-    Set this to true to provide more detailed output for the user.
+    """设置 agent 是否输出 verbose 详细信息。
+    将该值设为 true 时，会向用户提供更详细的输出。
 
-    :arg enable_verbose_messages: A boolean value to enable or disable verbose messages.
+    :arg enable_verbose_messages: 用于启用或禁用 verbose 详细信息的布尔值。
     """
     global VERBOSE
     VERBOSE = enable_verbose_messages
     set_verbose(VERBOSE)
-    return f"Verbose messages are now {'enabled' if VERBOSE else 'disabled'}."
+    return f"verbose 详细信息现在已{'启用' if VERBOSE else '禁用'}。"
 
 
 @tool
 def set_debugging(enable_debug_messages: bool) -> str:
-    """Sets the debug mode of the agent to enable or disable debug messages.
-    Set this to true to provide debug output for the user. Debug output
-    includes information about API calls, tool execution, and other.
+    """设置 agent 是否启用 debug 调试信息。
+    将该值设为 true 时，会向用户提供 debug 输出。debug 输出包含 API 调用、
+    工具执行以及其他内部执行信息。
 
-    :arg enable_debug_messages: A boolean value to enable or disable debug messages.
+    :arg enable_debug_messages: 用于启用或禁用 debug 调试信息的布尔值。
     """
     global DEBUG
     DEBUG = enable_debug_messages
     set_debug(DEBUG)
-    return f"Debug messages are now {'enabled' if DEBUG else 'disabled'}."
+    return f"debug 调试信息现在已{'启用' if DEBUG else '禁用'}。"
 
 
 @tool
 def wait(seconds: int) -> str:
-    """Waits for the specified number of seconds before continuing.
+    """等待指定秒数后再继续执行。
 
-    :arg seconds: The number of seconds to wait.
+    :arg seconds: 需要等待的秒数。
     """
     start = time.time()
     time.sleep(seconds)
     end = time.time()
-    return f"Waited exactly {end - start} seconds."
+    return f"已准确等待 {end - start} 秒。"

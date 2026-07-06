@@ -12,62 +12,37 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import os
 import unittest
-from unittest.mock import patch
 
-from langchain.agents import tool
+from langchain_core.tools import tool
 
 from src.rosa.tools import ROSATools, inject_blacklist
 
 
 @tool
 def sample_tool(blacklist=None):
-    """A sample tool that returns the blacklist."""
+    """返回黑名单的示例工具。"""
     return blacklist
 
 
 class TestROSATools(unittest.TestCase):
-    def setUp(self):
-        self.ros_version = int(os.getenv("ROS_VERSION", 1))
-
-    def test_initializes_with_ros_version_1(self):
-        if self.ros_version == 1:
-            tools = ROSATools(ros_version=1)
-            self.assertEqual(tools._ROSATools__ros_version, 1)
-        else:
-            with self.assertRaises(ModuleNotFoundError):
-                tools = ROSATools(ros_version=1)
-                self.assertEqual(tools._ROSATools__ros_version, 1)
-
     def test_initializes_with_ros_version_2(self):
-        if self.ros_version == 2:
-            tools = ROSATools(ros_version=2)
-            self.assertEqual(tools._ROSATools__ros_version, 2)
-        else:
-            with self.assertRaises(ModuleNotFoundError):
-                tools = ROSATools(ros_version=2)
-                self.assertEqual(tools._ROSATools__ros_version, 2)
+        tools = ROSATools(ros_version=2)
+        self.assertEqual(tools._ROSATools__ros_version, 2)
 
     def test_raises_value_error_for_invalid_ros_version(self):
-        if self.ros_version == 1:
-            with self.assertRaises(ModuleNotFoundError):
-                ROSATools(ros_version=2)
-        else:
-            with self.assertRaises(ModuleNotFoundError):
-                ROSATools(ros_version=1)
+        with self.assertRaisesRegex(ValueError, "仅支持 ROS2"):
+            ROSATools(ros_version=1)
 
-    @patch("src.rosa.tools.calculation")
-    @patch("src.rosa.tools.log")
-    @patch("src.rosa.tools.system")
-    def test_adds_default_tools(self, mock_system, mock_log, mock_calculation):
-        if self.ros_version == 1:
-            tools = ROSATools(ros_version=1)
-        else:
-            tools = ROSATools(ros_version=2)
-        self.assertIn(mock_calculation.return_value, tools.get_tools())
-        self.assertIn(mock_log.return_value, tools.get_tools())
-        self.assertIn(mock_system.return_value, tools.get_tools())
+    def test_adds_default_ros2_tools(self):
+        tools = ROSATools(ros_version=2)
+        tool_names = {tool.name for tool in tools.get_tools()}
+        self.assertIn("ros2_node_list", tool_names)
+        self.assertIn("ros2_topic_list", tool_names)
+        self.assertIn("ros2_service_list", tool_names)
+        self.assertIn("wait", tool_names)
+        self.assertIn("add", tool_names)
+        self.assertIn("read_log", tool_names)
 
     def test_injects_blacklist_into_tool_function(self):
         def sample_tool(blacklist=None):
@@ -84,26 +59,12 @@ class TestROSATools(unittest.TestCase):
         )
 
 
-@unittest.skipIf(os.environ.get("ROS_VERSION") == "2", "Skipping ROS 1 tests")
-class TestROSA1Tools(unittest.TestCase):
-    @patch("src.rosa.tools.ros1")
-    def test_ros1_tools(self, mock_ros1):
-        tools = ROSATools(ros_version=1)
-        self.assertIn(mock_ros1.return_value, tools.get_tools())
-        with self.assertRaises(ModuleNotFoundError):
-            tools = ROSATools(ros_version=2)
-            self.assertIn(mock_ros1.return_value, tools.get_tools())
-
-
-@unittest.skipIf(os.environ.get("ROS_VERSION") == "1", "Skipping ROS 2 tests")
 class TestROSA2Tools(unittest.TestCase):
-    @patch("src.rosa.tools.ros2")
-    def test_ros2_tools(self, mock_ros2):
+    def test_ros2_tools(self):
         tools = ROSATools(ros_version=2)
-        self.assertIn(mock_ros2.return_value, tools.get_tools())
-        with self.assertRaises(ModuleNotFoundError):
-            tools = ROSATools(ros_version=1)
-            self.assertIn(mock_ros2.return_value, tools.get_tools())
+        tool_names = {tool.name for tool in tools.get_tools()}
+        self.assertIn("ros2_doctor", tool_names)
+        self.assertIn("ros2_param_list", tool_names)
 
 
 if __name__ == "__main__":

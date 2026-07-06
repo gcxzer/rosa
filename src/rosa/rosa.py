@@ -19,11 +19,10 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, AsyncIterable, Dict, Literal, Optional, Union
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain.prompts import MessagesPlaceholder
 from langchain_community.callbacks import get_openai_callback
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 
 if TYPE_CHECKING:
@@ -35,7 +34,7 @@ from .tools import ROSATools
 
 logger = logging.getLogger(__name__)
 
-# Tested providers for static analysis; BaseChatModel accepted at runtime.
+# 这些模型提供商用于静态分析；运行时仍接受 BaseChatModel。
 if TYPE_CHECKING:
     ChatModel = Union[ChatOpenAI, AzureChatOpenAI, ChatAnthropic, ChatOllama]
 else:
@@ -43,45 +42,44 @@ else:
 
 
 class ROSA:
-    """ROSA (Robot Operating System Agent) is a class that encapsulates the logic for interacting with ROS systems
-    using natural language.
+    """ROSA（Robot Operating System Agent）封装了通过自然语言与 ROS 系统交互的核心逻辑。
 
     Args:
-        ros_version (Literal[1, 2]): The version of ROS that the agent will interact with.
-        llm (ChatModel): The language model to use for generating responses. Tested providers:
-            ChatOpenAI, AzureChatOpenAI, ChatAnthropic, and ChatOllama. Other BaseChatModel
-            subclasses that support tool calling may work but are not officially tested.
-            Note: token usage tracking is only supported for ChatOpenAI and AzureChatOpenAI.
-        tools (Optional[list]): A list of additional LangChain tool functions to use with the agent.
-        tool_packages (Optional[list]): A list of Python packages containing LangChain tool functions to use.
-        prompts (Optional[RobotSystemPrompts]): Custom prompts to use with the agent.
-        verbose (bool): Whether to print verbose output. Defaults to False.
-        blacklist (Optional[list]): A list of ROS tools to exclude from the agent.
-        accumulate_chat_history (bool): Whether to accumulate chat history. Defaults to True.
-        show_token_usage (bool): Whether to show token usage. Does not work when streaming is enabled. Defaults to False.
-        streaming (bool): Whether to stream the output of the agent. Defaults to True.
-        max_iterations (int): Maximum number of iterations for the agent executor. Defaults to 100.
-        return_intermediate_steps (bool): Whether to return intermediate steps in the agent's execution. 
-            Setting to True increases memory usage but provides detailed execution traces. Defaults to False.
+        ros_version (Literal[2]): agent 将要交互的 ROS 版本。当前分支仅支持 ROS2。
+        llm (ChatModel): 用于生成响应的语言模型。已经测试过的模型提供商包括：
+            ChatOpenAI、AzureChatOpenAI、ChatAnthropic 和 ChatOllama。其他支持工具调用的
+            BaseChatModel 子类在运行时可能可用，但并未被官方测试覆盖。
+            注意：token 用量统计目前只支持 ChatOpenAI 和 AzureChatOpenAI。
+        tools (Optional[list]): 额外提供给 agent 使用的 LangChain 工具函数列表。
+        tool_packages (Optional[list]): 包含 LangChain 工具函数的 Python 包列表。
+        prompts (Optional[RobotSystemPrompts]): 提供给 agent 的自定义 prompt。
+        verbose (bool): 是否打印详细输出。默认值为 False。
+        blacklist (Optional[list]): 需要从 agent 可见工具结果中排除的 ROS 名称列表。
+        accumulate_chat_history (bool): 是否累积聊天历史。默认值为 True。
+        show_token_usage (bool): 是否显示 token 用量。启用 streaming 时不可用。默认值为 False。
+        streaming (bool): 是否流式输出 agent 的结果。默认值为 True。
+        max_iterations (int): agent executor 的最大迭代次数。默认值为 100。
+        return_intermediate_steps (bool): 是否返回 agent 执行过程中的中间步骤。
+            设为 True 会增加内存使用，但可以提供更详细的执行轨迹。默认值为 False。
 
     Attributes:
-        chat_history (list): A list of messages representing the chat history.
+        chat_history (list): 表示聊天历史的消息列表。
 
     Methods:
-        clear_chat(): Clears the chat history.
-        invoke(query: str) -> str: Processes a user query and returns the agent's response.
-        astream(query: str) -> AsyncIterable[Dict[str, Any]]: Asynchronously streams the agent's response.
+        clear_chat(): 清空聊天历史。
+        invoke(query: str) -> str: 处理用户查询并返回 agent 响应。
+        astream(query: str) -> AsyncIterable[Dict[str, Any]]: 以异步流方式返回 agent 响应。
 
     Note:
-        - The `tools` and `tool_packages` arguments allow for extending the agent's capabilities.
-        - Custom `prompts` can be provided to tailor the agent's behavior for specific robots or use cases.
-        - Token usage display is automatically disabled when streaming is enabled.
-        - Use `invoke()` for non-streaming responses and `astream()` for streaming responses.
+        - `tools` 和 `tool_packages` 参数可用于扩展 agent 能力。
+        - 可以传入自定义 `prompts`，让 agent 行为适配特定机器人或特定使用场景。
+        - 启用 streaming 时会自动关闭 token 用量显示。
+        - 非流式响应使用 `invoke()`；流式响应使用 `astream()`。
     """
 
     def __init__(
         self,
-        ros_version: Literal[1, 2],
+        ros_version: Literal[2],
         llm: ChatModel,
         tools: Optional[list] = None,
         tool_packages: Optional[list] = None,
@@ -110,47 +108,45 @@ class ROSA:
         self.__prompts = self._get_prompts(prompts)
         self.__agent = self._get_agent()
         self.__executor = self._get_executor(verbose=verbose)
-        # cache this check - no need to do isinstance on every invoke
+        # 缓存模型类型检查结果，避免每次 invoke 都重复执行 isinstance。
         self.__supports_token_tracking = isinstance(llm, (ChatOpenAI, AzureChatOpenAI))
         self.__show_token_usage = show_token_usage if not streaming else False
 
         if self.__show_token_usage and not self.__supports_token_tracking:
             logger.warning(
-                "Token usage tracking only works with OpenAI/Azure models, not %s. "
-                "Disabling.",
+                "token 用量统计只支持 OpenAI/Azure 模型，不支持 %s。已自动禁用。",
                 type(llm).__name__,
             )
             self.__show_token_usage = False
 
     @property
     def chat_history(self):
-        """Get the chat history."""
+        """获取聊天历史。"""
         return self.__chat_history
 
     def clear_chat(self):
-        """Clear the chat history."""
+        """清空聊天历史。"""
         self.__chat_history = []
 
     def invoke(self, query: str) -> str:
         """
-        Invoke the agent with a user query and return the response.
+        使用用户查询调用 agent，并返回最终响应。
 
-        This method processes the user's query through the agent, handles token usage tracking,
-        and updates the chat history.
+        该方法会把用户查询交给 agent 处理，按需统计 token 用量，并更新聊天历史。
 
         Args:
-            query (str): The user's input query to be processed by the agent.
+            query (str): 需要 agent 处理的用户输入查询。
 
-        Returns:
-            str: The agent's response to the query. If an error occurs, it returns an error message.
+        返回：
+            str: agent 对查询的响应；如果发生错误，则返回错误说明。
 
         Raises:
-            Any exceptions raised during the invocation process are caught and returned as error messages.
+            调用过程中除 KeyboardInterrupt 外的异常都会被捕获，并以错误说明的形式返回。
 
         Note:
-            - This method uses OpenAI's callback to track token usage if enabled.
-            - The chat history is updated with the query and response if successful.
-            - Token usage is printed if the show_token_usage flag is set.
+            - 如果启用了 token 用量统计，本方法会使用 OpenAI callback。
+            - 成功执行后，查询和响应会被写入聊天历史。
+            - 如果设置了 show_token_usage，会打印 token 用量。
         """
         try:
             with self._token_callback() as cb:
@@ -159,67 +155,65 @@ class ROSA:
                 )
                 self._print_usage(cb)
         except KeyboardInterrupt:
-            # Re-raise KeyboardInterrupt so it can be handled upstream
+            # 重新抛出 KeyboardInterrupt，让上层调用者可以正确处理中断。
             raise
         except Exception as e:
-            return f"An error occurred: {str(e)}"
+            return f"发生错误：{str(e)}"
 
         self._record_chat_history(query, result["output"])
         return result["output"]
 
     async def astream(self, query: str) -> AsyncIterable[Dict[str, Any]]:
         """
-        Asynchronously stream the agent's response to a user query.
+        以异步流的形式返回 agent 对用户查询的响应。
 
-        This method processes the user's query and yields events as they occur,
-        including token generation, tool usage, and final output. It's designed
-        for use when streaming is enabled.
+        该方法会处理用户查询，并在事件发生时逐步产出事件，包括 token 生成、
+        工具调用和最终输出。它用于启用 streaming 的场景。
 
         Args:
-            query (str): The user's input query.
+            query (str): 用户输入查询。
 
-        Returns:
-            AsyncIterable[Dict[str, Any]]: An asynchronous iterable of dictionaries
-            containing event information. Each dictionary has a 'type' key and
-            additional keys depending on the event type:
-            - 'token': Yields generated tokens with 'content'.
-            - 'tool_start': Indicates the start of a tool execution with 'name' and 'input'.
-            - 'tool_end': Indicates the end of a tool execution with 'name' and 'output'.
-            - 'final': Provides the final output of the agent with 'content'.
-            - 'error': Indicates an error occurred with 'content' describing the error.
+        返回：
+            AsyncIterable[Dict[str, Any]]: 异步字典迭代器，每个字典都包含事件信息。
+            每个事件都有 `type` 字段，并根据事件类型包含额外字段：
+            - 'token': 通过 'content' 产出生成中的 token。
+            - 'tool_start': 表示工具开始执行，包含 'name' 和 'input'。
+            - 'tool_end': 表示工具执行结束，包含 'name' 和 'output'。
+            - 'final': 通过 'content' 给出 agent 最终输出。
+            - 'error': 表示发生错误，'content' 中包含错误说明。
 
         Raises:
-            ValueError: If streaming is not enabled for this ROSA instance.
-            Exception: If an error occurs during the streaming process.
+            ValueError: 当前 ROSA 实例未启用 streaming 时抛出。
+            Exception: streaming 过程中发生错误时抛出。
 
         Note:
-            This method updates the chat history with the final output if successful.
+            成功执行时，本方法会用最终输出更新聊天历史。
         """
         if not self.__streaming:
             raise ValueError(
-                "Streaming is not enabled. Use 'invoke' method instead or initialize ROSA with streaming=True."
+                "当前未启用 streaming。请改用 'invoke' 方法，或在初始化 ROSA 时设置 streaming=True。"
             )
 
         try:
             final_output = ""
-            # Stream events from the agent's response
+            # 从 agent 响应中逐个读取 streaming 事件。
             async for event in self.__executor.astream_events(
                 input={"input": query, "chat_history": self.__chat_history},
                 config={"run_name": "Agent"},
                 version="v2",
             ):
-                # Extract the event type
+                # 提取事件类型。
                 kind = event["event"]
 
-                # Handle chat model stream events
+                # 处理聊天模型的 token 流事件。
                 if kind == "on_chat_model_stream":
-                    # Extract the content from the event and yield it
+                    # 从事件中提取文本内容，并将其产出给调用者。
                     content = event["data"]["chunk"].content
                     if content:
                         final_output += f" {content}"
                         yield {"type": "token", "content": content}
 
-                # Handle tool start events
+                # 处理工具开始执行事件。
                 elif kind == "on_tool_start":
                     yield {
                         "type": "tool_start",
@@ -227,7 +221,7 @@ class ROSA:
                         "input": event["data"].get("input"),
                     }
 
-                # Handle tool end events
+                # 处理工具执行结束事件。
                 elif kind == "on_tool_end":
                     yield {
                         "type": "tool_end",
@@ -235,26 +229,26 @@ class ROSA:
                         "output": event["data"].get("output"),
                     }
 
-                # Handle chain end events
+                # 处理 agent 链路结束事件。
                 elif kind == "on_chain_end":
                     if event["name"] == "Agent":
                         chain_output = event["data"].get("output", {}).get("output")
                         if chain_output:
                             final_output = (
-                                chain_output  # Override with final output if available
+                                chain_output  # 如果存在最终输出，用它覆盖 token 拼接结果。
                             )
                             yield {"type": "final", "content": chain_output}
 
             if final_output:
                 self._record_chat_history(query, final_output)
         except KeyboardInterrupt:
-            # Re-raise KeyboardInterrupt so it can be handled upstream
-            yield {"type": "error", "content": "Operation interrupted by user"}
+            # 将用户中断转换成 streaming error 事件，方便上层 UI 统一展示。
+            yield {"type": "error", "content": "操作已被用户中断"}
         except Exception as e:
-            yield {"type": "error", "content": f"An error occurred: {e}"}
+            yield {"type": "error", "content": f"发生错误：{e}"}
 
     def _get_executor(self, verbose: bool) -> AgentExecutor:
-        """Create and return an executor for processing user inputs and generating responses."""
+        """创建并返回用于处理用户输入、生成响应的 executor。"""
         executor = AgentExecutor(
             agent=self.__agent,
             tools=self.__tools.get_tools(),
@@ -267,7 +261,7 @@ class ROSA:
         return executor
 
     def _get_agent(self):
-        """Create and return an agent for processing user inputs and generating responses."""
+        """创建并返回用于处理用户输入、生成响应的 agent。"""
         agent = create_tool_calling_agent(
             llm=self.__llm,
             tools=self.__tools.get_tools(),
@@ -277,12 +271,12 @@ class ROSA:
 
     def _get_tools(
         self,
-        ros_version: Literal[1, 2],
+        ros_version: Literal[2],
         packages: Optional[list],
         tools: Optional[list],
         blacklist: Optional[list],
     ) -> ROSATools:
-        """Create a ROSA tools object with the specified ROS version, tools, packages, and blacklist."""
+        """根据 ROS2 工具、额外工具包和黑名单创建 ROSA 工具集合。"""
         rosa_tools = ROSATools(ros_version, blacklist=blacklist)
         if tools:
             rosa_tools.add_tools(tools)
@@ -293,11 +287,11 @@ class ROSA:
     def _get_prompts(
         self, robot_prompts: Optional[RobotSystemPrompts] = None
     ) -> ChatPromptTemplate:
-        """Create a chat prompt template from the system prompts and robot-specific prompts."""
-        # Start with default system prompts
+        """用默认系统 prompt 和机器人专属 prompt 创建聊天 prompt 模板。"""
+        # 从默认系统 prompt 开始。
         prompts = system_prompts
 
-        # Add robot-specific prompts if provided
+        # 如果调用者提供了机器人专属 prompt，就把它追加到默认 prompt 后面。
         if robot_prompts:
             prompts.append(robot_prompts.as_message())
 
@@ -313,10 +307,10 @@ class ROSA:
 
     @contextmanager
     def _token_callback(self):
-        """Context manager for token usage tracking.
+        """用于 token 用量统计的上下文管理器。
 
-        Uses the OpenAI callback when the LLM is an OpenAI-based model,
-        otherwise yields None so the rest of the flow is unaffected.
+        当 LLM 是 OpenAI 系模型时使用 OpenAI callback；否则产出 None，
+        确保其余执行流程不受影响。
         """
         if self.__supports_token_tracking:
             with get_openai_callback() as cb:
@@ -325,7 +319,7 @@ class ROSA:
             yield None
 
     def _print_usage(self, cb):
-        """Print the token usage if show_token_usage is enabled."""
+        """在启用 show_token_usage 时打印 token 用量。"""
         if cb is None or not self.__show_token_usage:
             return
         print(f"[bold]Prompt Tokens:[/bold] {cb.prompt_tokens}")
@@ -333,7 +327,7 @@ class ROSA:
         print(f"[bold]Total Cost (USD):[/bold] ${cb.total_cost}")
 
     def _record_chat_history(self, query: str, response: str):
-        """Record the chat history if accumulation is enabled."""
+        """如果启用了聊天历史累积，则记录本轮查询和响应。"""
         if self.__accumulate_chat_history:
             self.__chat_history.extend(
                 [HumanMessage(content=query), AIMessage(content=response)]

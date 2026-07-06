@@ -1,8 +1,75 @@
-.idea
-.vscode
-src/jpl_rosa.egg-info
+# macOS / Windows 本地系统文件。
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# 编辑器和 IDE 本地配置。
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 本地环境变量和私有配置；示例文件可以继续提交。
+.env
+.env.*
+!.env.example
+*.local
+
+# Python 编译缓存和测试缓存。
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Python 虚拟环境。
+.venv/
+venv/
+env/
+ENV/
+
+# Python 打包、安装和元数据产物。
 build/
 dist/
-__pycache__/
-docs
-.DS_Store
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# uv 本地运行可能生成的锁文件；这个 fork 当前不跟踪它。
+uv.lock
+
+# ROS2 / colcon 本地工作区产物和日志。
+install/
+log/
+.colcon/
+.ros/
+
+# ROS bag 和机器人运行数据通常体积很大，不放进源码仓库。
+*.bag
+*.db3
+*.mcap
+rosbag2_*/
+
+# Docker 或本地覆盖配置。
+.docker/
+docker-compose.override.yml
+
+# 文档构建产物。
+docs/
+site/
+
+# 通用本地缓存目录。
+.cache/

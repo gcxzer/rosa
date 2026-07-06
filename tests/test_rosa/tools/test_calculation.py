@@ -121,7 +121,7 @@ class TestCalculationTools(unittest.TestCase):
         )
 
     def test_tangent_returns_tangent_of_x_values(self):
-        # Convert the above to use assertAlmostEqual
+        # 使用 assertAlmostEqual 比较浮点结果，避免精度误差造成误报。
         tangents = tangent.invoke({"x_values": [0, math.pi / 4]})
         self.assertAlmostEqual(tangents[0]["tan(0.0)"], 0.0, delta=0.0000000000000001)
         self.assertAlmostEqual(

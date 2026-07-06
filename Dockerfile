@@ -1,52 +1,47 @@
-FROM osrf/ros:noetic-desktop AS rosa-ros1
+FROM osrf/ros:humble-desktop AS rosa-ros2
 LABEL authors="Rob Royce"
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV HEADLESS=false
 ARG DEVELOPMENT=false
 
-# Install linux packages
+# 安装 Linux 软件包。
 RUN apt-get update && apt-get install -y \
-    ros-$(rosversion -d)-turtlesim \
+    ros-${ROS_DISTRO}-turtlesim \
     locales \
     xvfb \
-    python3.9 \
     python3-pip \
     curl \
     build-essential
 
-# Install Rust (required for building tiktoken)
+# 安装 Rust；构建 tiktoken 时需要它。
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Cleanup disabled for development builds
+# 开发构建中暂时不启用清理。
 # RUN apt-get clean && rm -rf /var/lib/apt/lists/*
-# Upgrade pip first, then install packages
-RUN python3.9 -m pip install --upgrade pip
-RUN python3.9 -m pip install --break-system-packages python-dotenv catkin_tools
+# 先升级 pip，再配置 ROS2 shell 环境。
+RUN python3 -m pip install --upgrade pip
 RUN rosdep update && \
-    echo "source /opt/ros/noetic/setup.bash" >> /root/.bashrc && \
-    echo "alias start='catkin build && source devel/setup.bash && roslaunch turtle_agent agent.launch'" >> /root/.bashrc && \
-    echo "export ROSLAUNCH_SSH_UNKNOWN=1" >> /root/.bashrc
+    echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc && \
+    echo "alias start_turtlesim='ros2 run turtlesim turtlesim_node'" >> /root/.bashrc
 
 COPY . /app/
 WORKDIR /app/
 
-# Modify the RUN command to use ARG
+# 根据 ARG 修改 RUN 命令，支持开发模式和普通安装模式。
 RUN /bin/bash -c 'if [ "$DEVELOPMENT" = "true" ]; then \
-    python3.9 -m pip install --break-system-packages --ignore-installed --user -e .; \
+    python3 -m pip install --break-system-packages --ignore-installed --user -e .; \
     else \
-    python3.9 -m pip install --break-system-packages --ignore-installed -U jpl-rosa>=1.0.8; \
+    python3 -m pip install --break-system-packages --ignore-installed -U jpl-rosa>=1.0.8; \
     fi'
 
-CMD ["/bin/bash", "-c", "source /opt/ros/noetic/setup.bash && \
-    roscore > /dev/null 2>&1 & \
-    sleep 5 && \
+CMD ["/bin/bash", "-c", "source /opt/ros/humble/setup.bash && \
     if [ \"$HEADLESS\" = \"false\" ]; then \
-    rosrun turtlesim turtlesim_node & \
+    ros2 run turtlesim turtlesim_node & \
     else \
-    xvfb-run -a -s \"-screen 0 1920x1080x24\" rosrun turtlesim turtlesim_node & \
+    xvfb-run -a -s \"-screen 0 1920x1080x24\" ros2 run turtlesim turtlesim_node & \
     fi && \
     sleep 5 && \
-    echo \"Run \\`start streaming:=true\\` to build and launch the ROSA-TurtleSim demo.\" && \
+    echo \"已启动 ROS2 TurtleSim。你可以在容器内使用 ROS2 CLI 或自己的 ROSA 脚本连接。\" && \
     /bin/bash"]
