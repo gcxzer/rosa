@@ -8,6 +8,12 @@
 
 ## 主要改动
 
+### 修复 turtlesim 几何绘图拖尾
+
+- `_draw_line_segment_raw()` 不再用 `cmd_vel` 按时间积分距离绘制几何线段。
+- 改为“关笔传送到起点，开笔传送到终点”，让 turtlesim 用 `teleport_absolute` 画精确直线。
+- 新增测试确保 `draw_line_segment` 不再发布 `/cmd_vel`，避免正方形、矩形、折线和圆弧出现拖尾或错位。
+
 ### 提交 uv.lock
 
 - 从 `.gitignore` 中移除 `uv.lock`。
@@ -89,7 +95,7 @@ uv run python main.py --help
 测试结果：
 
 ```text
-110 passed
+111 passed
 ```
 
 也验证过 `main.py` 可以向模型发送一条简单消息并收到响应。

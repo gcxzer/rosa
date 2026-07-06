@@ -67,6 +67,47 @@ def test_draw_line_segment_rejects_out_of_bounds_without_ros_call(monkeypatch):
     assert calls == []
 
 
+def test_draw_line_segment_uses_teleport_for_exact_geometry(monkeypatch):
+    calls = []
+
+    def fake_run_ros2(args, timeout=10.0):
+        del timeout
+        calls.append(args)
+        return True, "ok"
+
+    monkeypatch.setattr(turtle_tools, "_run_ros2", fake_run_ros2)
+
+    result = turtle_tools.draw_line_segment.invoke(
+        {
+            "name": "turtle1",
+            "x1": 1.0,
+            "y1": 2.0,
+            "x2": 4.0,
+            "y2": 2.0,
+            "r": 255,
+            "g": 0,
+            "b": 0,
+            "width": 3,
+        }
+    )
+
+    assert result["success"] is True
+    assert [call[3] for call in calls] == [
+        "/turtle1/set_pen",
+        "/turtle1/teleport_absolute",
+        "/turtle1/set_pen",
+        "/turtle1/set_pen",
+        "/turtle1/teleport_absolute",
+    ]
+    assert not any("/cmd_vel" in str(part) for call in calls for part in call)
+    assert '"x": 1.0' in calls[1][-1]
+    assert '"y": 2.0' in calls[1][-1]
+    assert '"x": 4.0' in calls[4][-1]
+    assert '"y": 2.0' in calls[4][-1]
+    assert '"r": 255' in calls[3][-1]
+    assert '"width": 3' in calls[3][-1]
+
+
 def test_turtlesim_set_background_sets_params_then_clears(monkeypatch):
     calls = []
 

@@ -782,17 +782,13 @@ def _draw_line_segment_raw(
     if not pen_result.get("success"):
         return pen_result
 
-    move_result = _publish_twist_raw(
-        name=name,
-        linear_x=distance,
-        angular_z=0.0,
-        linear_y=0.0,
-        duration=1.0,
-        rate=10.0,
-        stop_after=True,
-    )
-    if not move_result.get("success"):
-        return move_result
+    # 画几何线段时不能用 cmd_vel 按时间积分距离：topic 发布结束和 stop 命令生效之间
+    # 会有调度延迟，turtlesim 会继续按最后速度向前跑，导致矩形拖尾或顶点错位。
+    # turtlesim 的 teleport_absolute 在画笔开启时会直接连接当前位置和目标点，因此这里用
+    # “关笔传送到起点 -> 开笔传送到终点”的方式画精确直线。
+    draw_result = _teleport_absolute_raw(name, x2, y2, angle, hide_pen=False)
+    if not draw_result.get("success"):
+        return draw_result
 
     return {
         "success": True,
