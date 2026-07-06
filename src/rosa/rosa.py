@@ -25,7 +25,6 @@ from langchain_core.messages import (
     BaseMessage,
     ToolMessage,
 )
-from langgraph.checkpoint.memory import InMemorySaver
 
 from prompts.system import RobotSystemPrompts, render_system_prompt
 from tools.registry import ROSATools
@@ -63,7 +62,8 @@ class ROSA:
     ):
         self.__streaming = streaming
         self.__max_iterations = max_iterations
-        self.__thread_id = str(uuid4())
+        self.__session_id = str(uuid4())
+        self.__messages: list[dict[str, str]] = []
 
         # 这里直接完成工具注册。`ROSATools` 负责加载默认 ROS2 工具；
         # 调用者传入的工具和工具包在同一处追加，读代码时不用来回跳转。
@@ -73,30 +73,52 @@ class ROSA:
         if tool_packages:
             rosa_tools.add_packages(tool_packages)
 
-        # LangGraph checkpointer 按 thread_id 保存短期上下文；agent graph 会持有它。
-        checkpointer = InMemorySaver()
         system_prompt = render_system_prompt(prompts)
         self.__agent = create_agent(
             model=llm,
             tools=rosa_tools.get_tools(),
             system_prompt=system_prompt,
-            checkpointer=checkpointer,
             debug=verbose,
         )
 
-    def clear_chat(self):
-        """切换到新的 LangGraph thread，让后续调用从空对话开始。
+    @property
+    def session_id(self) -> str:
+        """返回当前 ROSA session id。"""
+        return self.__session_id
 
-        LangGraph 的 InMemorySaver 会按 `thread_id` 隔离短期记忆。这里不需要手动清理
-        checkpointer 内部数据；换一个新的 thread_id 即可。
+    def use_session(
+        self,
+        session_id: str,
+        messages: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
+        """切换到指定 session，并恢复 transcript 历史消息。
+
+        现在 ROSA 不再依赖 LangGraph checkpointer 保存多轮上下文，而是把 user/assistant
+        文本消息作为明确的输入历史传给每一轮 agent。这样本地 JSONL transcript 和运行时
+        上下文只有一套来源，跨进程恢复也更直接。
         """
-        self.__thread_id = str(uuid4())
+        normalized = str(session_id or "").strip()
+        self.__session_id = normalized or str(uuid4())
+        self.__messages = [
+            {
+                "role": str(message.get("role") or ""),
+                "content": str(message.get("content") or ""),
+            }
+            for message in messages or []
+            if str(message.get("role") or "") in {"user", "assistant"}
+            and str(message.get("content") or "")
+        ]
+
+    def clear_chat(self):
+        """切换到新的 ROSA session，让后续调用从空对话开始。"""
+        self.__session_id = str(uuid4())
+        self.__messages = []
 
     def invoke(self, query: str) -> str:
         """使用用户查询调用 agent，并返回最终响应字符串。"""
         try:
             result = self.__agent.invoke(
-                {"messages": [{"role": "user", "content": query}]},
+                {"messages": self._input_messages(query)},
                 config=self._runtime_config(),
             )
         except KeyboardInterrupt:
@@ -108,7 +130,9 @@ class ROSA:
         # agent state 里最后一条没有 tool_calls 的 AIMessage，就是本轮最终文本回答。
         for message in reversed(result.get("messages", [])):
             if isinstance(message, AIMessage) and not message.tool_calls:
-                return self._message_text(message)
+                response = self._message_text(message)
+                self._record_turn(query, response)
+                return response
         return ""
 
     async def astream(self, query: str) -> AsyncIterable[Dict[str, Any]]:
@@ -126,7 +150,7 @@ class ROSA:
         final_output = ""
         try:
             async for chunk in self.__agent.astream(
-                {"messages": [{"role": "user", "content": query}]},
+                {"messages": self._input_messages(query)},
                 config=self._runtime_config(),
                 stream_mode=["messages", "updates"],
                 version="v2",
@@ -165,6 +189,7 @@ class ROSA:
                         if content:
                             final_output = content
 
+            self._record_turn(query, final_output)
             yield {"type": "final", "content": final_output}
         except KeyboardInterrupt:
             # 将用户中断转换成 streaming error 事件，方便上层 UI 统一展示。
@@ -174,12 +199,22 @@ class ROSA:
 
     def _runtime_config(self) -> dict[str, Any]:
         """生成 LangGraph 每次 invoke/astream 需要的运行配置。"""
-        config: dict[str, Any] = {"configurable": {"thread_id": self.__thread_id}}
+        config: dict[str, Any] = {}
         if self.__max_iterations:
             # `recursion_limit` 是 LangGraph 控制图执行步数的通用开关。这里至少给 2，
             # 避免用户传 1 时连模型节点和工具节点都不够跑。
             config["recursion_limit"] = max(2, self.__max_iterations)
         return config
+
+    def _input_messages(self, query: str) -> list[dict[str, str]]:
+        """生成本轮输入消息。"""
+        return [*self.__messages, {"role": "user", "content": query}]
+
+    def _record_turn(self, query: str, response: str) -> None:
+        """把本轮 user/assistant 文本写入当前进程内的上下文。"""
+        self.__messages.append({"role": "user", "content": query})
+        if response:
+            self.__messages.append({"role": "assistant", "content": response})
 
     def _message_text(self, message: BaseMessage | AIMessageChunk) -> str:
         """把 LangChain message/chunk 的多种 content 形状规范成字符串。"""

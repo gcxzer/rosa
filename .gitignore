@@ -57,6 +57,9 @@ log/
 .colcon/
 .ros/
 
+# ROSA 本地 session transcript 和运行状态。
+.rosa/
+
 # ROS bag 和机器人运行数据通常体积很大，不放进源码仓库。
 *.bag
 *.db3

@@ -127,7 +127,7 @@ def test_repeated_rosa_construction_does_not_duplicate_custom_prompts():
     assert "只检查实验台 A" not in plain_system_text
 
 
-def test_repeated_invokes_reuse_thread_state():
+def test_repeated_invokes_reuse_in_process_message_history():
     model = SequenceChatModel(
         responses=[AIMessage(content="第一轮回答"), AIMessage(content="第二轮回答")]
     )
@@ -142,7 +142,7 @@ def test_repeated_invokes_reuse_thread_state():
     assert "第二轮问题" in second_call_text
 
 
-def test_clear_chat_resets_thread_state():
+def test_clear_chat_resets_message_history():
     model = SequenceChatModel(
         responses=[AIMessage(content="第一轮回答"), AIMessage(content="第二轮回答")]
     )
@@ -156,6 +156,34 @@ def test_clear_chat_resets_thread_state():
     assert "第一轮问题" not in second_call_text
     assert "第一轮回答" not in second_call_text
     assert "第二轮问题" in second_call_text
+
+
+def test_use_session_restores_transcript_history_without_duplicate_injection():
+    model = SequenceChatModel(
+        responses=[AIMessage(content="第二轮回答"), AIMessage(content="第三轮回答")]
+    )
+    agent = ROSA(ros_version=2, llm=model)
+    agent.use_session(
+        "saved-session",
+        [
+            {"role": "user", "content": "第一轮问题"},
+            {"role": "assistant", "content": "第一轮回答"},
+        ],
+    )
+
+    assert agent.session_id == "saved-session"
+    assert agent.invoke("第二轮问题") == "第二轮回答"
+    assert agent.invoke("第三轮问题") == "第三轮回答"
+
+    first_call_text = "\n".join(str(message.content) for message in model.calls[0])
+    assert "第一轮问题" in first_call_text
+    assert "第一轮回答" in first_call_text
+    assert "第二轮问题" in first_call_text
+
+    second_call_text = "\n".join(str(message.content) for message in model.calls[1])
+    assert second_call_text.count("第一轮问题") == 1
+    assert second_call_text.count("第一轮回答") == 1
+    assert "第三轮问题" in second_call_text
 
 
 def test_blacklist_injection_runs_inside_create_agent_tool_execution():

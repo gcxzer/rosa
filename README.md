@@ -1,16 +1,14 @@
 # ROSA fork
 
-这是一个基于 [NASA JPL ROSA](https://github.com/nasa-jpl/rosa) 的个人 fork。一个更适合继续研究、阅读和二次开发的 ROS2-only 版本。
+这个项目基于 [NASA JPL ROSA](https://github.com/nasa-jpl/rosa) 改造，适配langchain 1.0+, 删除了ros1。完整改动记录见 [CHANGES.md](CHANGES.md)。
 
-详细改造记录见 [CHANGES.md](CHANGES.md)。
+## 能做什么
 
-## 当前定位
-
-这个 fork 主要做三件事：
-
-- 只保留 ROS2 工具链。
-- 使用 LangChain v1 agent API 管理工具调用和对话状态。
-- 用新架构重写 TurtleAgent，让 turtlesim demo 也走 ROS2-only + Codex + LangChain v1。
+- 读取 ROS2 node、topic、service、parameter 和日志信息。
+- 用自然语言和 ROS2 系统多轮对话，并保留本地 session。
+- 通过 Codex + LangChain v1 tool-calling 调用机器人工具。
+- 使用流式输出观察模型回答、工具开始和工具结束事件。
+- 以 turtlesim 作为默认 demo，验证移动、传送、画线、画矩形、画圆等控制链路。
 
 ## 环境要求
 
@@ -19,93 +17,111 @@
 - ROS2 Humble、Iron、Jazzy 或更高版本
 - 本机已经登录 Codex，并存在 `~/.codex/auth.json`
 
-如果需要调用真实 ROS2 系统，请先在当前 shell 中 source 对应 ROS2 环境。
-
-## 快速运行
-
-运行本地统一入口：
+运行前先在当前 shell 里 source ROS2 环境，例如：
 
 ```bash
-uv run python main.py --agent turtle "列出 turtlesim 当前的 ROS2 node、topic 和 service"
+source /opt/ros/humble/setup.zsh
 ```
 
-指定模型和 thinking mode：
+## 快速启动
+
+启动 agent：
 
 ```bash
-uv run python main.py --agent turtle --model gpt-5.5 --thinking high "当前有哪些 ROS2 node"
+uv run python main.py --agent turtle
 ```
 
-`--thinking none` 表示不显式传 reasoning effort。当前可选值：
+不传 prompt 时，默认会先发送 `你好，你是谁？`，然后继续进入多轮对话。
+
+也可以启动时直接给第一条消息：
+
+```bash
+uv run python main.py --agent turtle "当前 ROS2 系统里有哪些 node、topic 和 service？"
+```
+
+第一条消息发送完成后，程序不会退出，会继续等待下一轮输入。
+
+## 可选 Demo
+
+如果要验证运动控制和绘图工具，可以另开一个终端启动 turtlesim：
+
+```bash
+ros2 run turtlesim turtlesim_node
+```
+
+然后在 agent 里输入：
+
+```text
+检查当前 ROS2 graph，确认 turtlesim 是否正在运行。
+```
+
+```text
+把 turtle1 传送到 (3, 3)，然后画一个边长为 2 的正方形。
+```
+
+turtlesim 只是当前自带的可运行目标；真实机器人接入时，核心改动通常是新增对应机器人平台的工具包和 prompt。
+
+
+## 模型参数
+
+默认模型是 `gpt-5.5`：
+
+```bash
+uv run python main.py --agent turtle --model gpt-5.5
+```
+
+可以设置 reasoning effort：
+
+```bash
+uv run python main.py --agent turtle --thinking high "分析当前 ROS2 graph"
+```
+
+`--thinking none` 表示不显式覆盖模型默认配置。当前可选值：
 
 ```text
 none, low, medium, high, xhigh
 ```
 
-在真实绘图前，请先启动 turtlesim，并确保运行 `main.py` 的 shell 能访问同一个 ROS2 graph。
+## Session
 
-## 代码用法
+本地对话会保存到 `.rosa/sessions/`：
 
-```python
-from codex import CodexChatModel
-from rosa import ROSA
+- `sessions.json` 保存 session 索引。
+- 每个 session 对应一个 JSONL transcript。
+- 每轮对话都会把历史 user/assistant 消息交回 agent，因此下一轮能接上上下文。
 
-llm = CodexChatModel(model="gpt-5.5", thinking="high")
-agent = ROSA(ros_version=2, llm=llm, streaming=True)
+启动时终端会打印新 session id，例如：
 
-result = agent.invoke("列出当前系统中的 ROS2 topic")
-print(result)
+```text
+新建 session：20260706_120000_abcd1234 - TurtleAgent chat
 ```
 
-## 工具扩展
+下次可以用这个 id 继续同一个对话：
 
-`ROSA` 默认加载这些工具模块：
-
-- `src/tools/calculation.py`
-- `src/tools/log.py`
-- `src/tools/system.py`
-- `src/tools/ros2.py`
-
-如果只想添加几个已经创建好的 LangChain tool，用 `tools`：
-
-```python
-agent = ROSA(
-    ros_version=2,
-    llm=llm,
-    tools=[my_tool],
-)
+```bash
+uv run python main.py --agent turtle --session-id 20260706_120000_abcd1234
 ```
 
-如果想扫描一个模块里的公开 LangChain tools，用 `tool_packages`：
+## 接入其他机器人
 
-```python
-import my_tools
+当前 TurtleAgent 的运行方式可以作为其他 ROS2 机器人 agent 的模板：
 
-agent = ROSA(
-    ros_version=2,
-    llm=llm,
-    tool_packages=[my_tools],
-)
-```
+- 在 `turtle_agent/tools.py` 这种位置定义平台专用 LangChain tools。
+- 在 `turtle_agent/prompts.py` 这种位置描述机器人能力、约束和安全边界。
+- 继承 `ROSA`，把默认 ROS2 工具和平台专用工具一起注册给 agent。
+- 继续复用 `src/codex/` 的 Codex ChatModel 和 `src/sessions/` 的本地 session 管理。
 
-`blacklist` 只在初始化 `ROSA` / `ROSATools` 时传入，并统一注入到需要该参数的 ROS2 工具函数里。
+## 代码位置
 
-## TurtleAgent
-
-TurtleAgent 是基于当前 ROSA runtime 重写的 turtlesim 专用 agent：
-
-- 代码入口是 `turtle_agent/agent.py`。
-- 专用 prompt 在 `turtle_agent/prompts.py`。
-- 专用工具在 `turtle_agent/tools.py`。
-- 本地调试入口是统一的 `main.py --agent turtle`。
-
-代码使用方式：
-
-```python
-from turtle_agent import TurtleAgent
-
-agent = TurtleAgent(streaming=True)
-agent.invoke("把 turtle1 传送到 (3, 3)，然后画一个边长为 2 的正方形")
-```
+- `main.py`：当前本地命令行入口。
+- `turtle_agent/agent.py`：TurtleAgent 类。
+- `turtle_agent/prompts.py`：当前 agent 的系统 prompt。
+- `turtle_agent/tools.py`：当前 agent 的平台专用工具。
+- `src/rosa/rosa.py`：底层 ROSA agent runtime。
+- `src/codex/`：Codex Responses API 到 LangChain `BaseChatModel` 的适配层。
+- `src/sessions/`：本地 session 索引和 JSONL transcript 存储。
+- `src/tools/`：通用 ROS2、系统、日志和计算工具。
+- `tests/`：单元测试。
 
 ## 开发验证
 
@@ -124,20 +140,8 @@ uv run --with pytest pytest -q -W error
 当前验证结果：
 
 ```text
-106 passed
+109 passed
 ```
-
-## 目录说明
-
-- `main.py`：本地统一流式测试入口，通过 `--agent` 指定 agent。当前只有 `turtle`。
-- `src/rosa/rosa.py`：ROSA agent 主体逻辑。
-- `src/codex/`：Codex Responses API 到 LangChain `BaseChatModel` 的适配层。
-- `src/prompts/`：系统 prompt 和机器人 prompt 拼接逻辑。
-- `src/tools/`：默认工具、ROS2 CLI 封装和工具注册逻辑。
-- `turtle_agent/`：和 `src/` 同级的 ROS2 turtlesim agent 示例。
-- `tests/`：单元测试。
-
-当前 fork 已删除旧版 ROS1 TurtleAgent 示例；新的 TurtleAgent 使用 `main.py --agent turtle` 运行。
 
 ## 许可证
 

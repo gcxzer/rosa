@@ -42,4 +42,18 @@ dependencies = [
 "Bug Tracker" = "https://github.com/nasa-jpl/rosa/issues"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "."]
+include = [
+    "codex",
+    "codex.*",
+    "prompts",
+    "prompts.*",
+    "rosa",
+    "rosa.*",
+    "sessions",
+    "sessions.*",
+    "tools",
+    "tools.*",
+    "turtle_agent",
+    "turtle_agent.*",
+]
