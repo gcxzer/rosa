@@ -66,17 +66,23 @@ uv run python main.py --agent turtle "把 turtle1 传送到 (3, 3)，然后画�
 
 ## Run ArmAgent
 
-先启动 MuJoCo + MoveIt2 机械臂仿真：
+先启动 MuJoCo + MoveIt2 机械臂仿真。默认会打开 MuJoCo Simulate 窗口，不打开 RViz：
 
 ```bash
 source scripts/load_arm_ros2_resources.sh
 ros2 launch moveit_resources_panda_moveit_config arm_mujoco.launch.py
 ```
 
-如果只想后台运行仿真，不打开 MuJoCo 窗口和 RViz：
+如果想同时打开 RViz 查看 MoveIt planning scene：
 
 ```bash
-ros2 launch moveit_resources_panda_moveit_config arm_mujoco.launch.py headless:=true rviz:=false
+ros2 launch moveit_resources_panda_moveit_config arm_mujoco.launch.py rviz:=true
+```
+
+如果只想后台运行仿真，不打开 MuJoCo 窗口：
+
+```bash
+ros2 launch moveit_resources_panda_moveit_config arm_mujoco.launch.py headless:=true
 ```
 
 另开一个终端运行 ArmAgent：

@@ -178,8 +178,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "rviz",
-                default_value="true",
-                description="true 时同时打开 RViz，方便查看 MoveIt planning scene。",
+                default_value="false",
+                description="true 时额外打开 RViz，方便查看 MoveIt planning scene；默认只打开 MuJoCo。",
             ),
             DeclareLaunchArgument(
                 "rviz_config",
