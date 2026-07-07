@@ -46,7 +46,7 @@ class MoveItRuntimeClient:
         nodes = self._run_ros2(["ros2", "node", "list"])
         topics = self._run_ros2(["ros2", "topic", "list"])
         services = self._run_ros2(["ros2", "service", "list"])
-        controllers = self._run_ros2(["ros2", "control", "list_controllers"])
+        controllers = self._list_controllers()
 
         detected = {
             "nodes": nodes.get("lines", []),
@@ -54,6 +54,11 @@ class MoveItRuntimeClient:
             "services": services.get("lines", []),
             "controllers": controllers.get("lines", []),
         }
+        if controllers.get("source"):
+            detected["controller_query_source"] = controllers["source"]
+        if controllers.get("error"):
+            detected["controller_query_error"] = controllers["error"]
+
         missing: list[str] = []
         if not nodes.get("success"):
             missing.append("ros2 node list")
@@ -61,13 +66,18 @@ class MoveItRuntimeClient:
             missing.append("ros2 topic list")
         if not services.get("success"):
             missing.append("ros2 service list")
-        if not controllers.get("success"):
-            missing.append("ros2 control list_controllers")
 
         node_text = "\n".join(detected["nodes"])
         topic_text = "\n".join(detected["topics"])
         service_text = "\n".join(detected["services"])
         controller_text = "\n".join(detected["controllers"])
+        controller_graph_visible = (
+            "panda_arm_controller" in node_text
+            and "joint_state_broadcaster" in node_text
+            and "/controller_manager/list_controllers" in service_text
+        )
+        if not controllers.get("success") and not controller_graph_visible:
+            missing.append("ros2 control list_controllers")
         if "move_group" not in node_text and "move_group" not in service_text:
             missing.append("MoveIt2 move_group")
         if "/joint_states" not in topic_text:
@@ -365,13 +375,62 @@ class MoveItRuntimeClient:
         }
 
     def stop_motion(self) -> dict[str, Any]:
-        controllers = self._run_ros2(["ros2", "control", "list_controllers"])
+        controllers = self._list_controllers()
         if not controllers.get("success"):
             return controllers
         return {
             "success": True,
             "summary": "已请求停止检查；如需硬停止，请在控制器侧执行 halt/stop 或急停流程。",
             "controllers": controllers.get("lines", []),
+        }
+
+    def _list_controllers(self) -> dict[str, Any]:
+        """尽量稳定地读取 controller_manager 当前控制器列表。
+
+        不同 ROS2 / ros2_control 版本的 `ros2 control list_controllers` 默认 controller manager
+        解析不完全一致。你的 Jazzy 环境里 graph 和 service 都在线，但默认 CLI 没拿到列表，
+        会导致 readiness 被误判为失败。所以这里按顺序尝试：
+        1. 显式指定 `/controller_manager` 的 ros2 control CLI。
+        2. 兼容旧写法的默认 ros2 control CLI。
+        3. 直接调用 `/controller_manager/list_controllers` service。
+        """
+        attempts = [
+            (
+                "ros2_control_cli_explicit",
+                ["ros2", "control", "list_controllers", "-c", "/controller_manager"],
+            ),
+            (
+                "ros2_control_cli_default",
+                ["ros2", "control", "list_controllers"],
+            ),
+            (
+                "controller_manager_service",
+                [
+                    "ros2",
+                    "service",
+                    "call",
+                    "/controller_manager/list_controllers",
+                    "controller_manager_msgs/srv/ListControllers",
+                    "{}",
+                ],
+            ),
+        ]
+
+        errors: list[str] = []
+        for source, command in attempts:
+            result = self._run_ros2(command, timeout=self.timeout + 2.0)
+            if result.get("success"):
+                lines = result.get("lines", [])
+                # service call 的输出会带 requester/response 包装，但仍包含 controller name/state；
+                # 保留原始行给用户和测试看，避免为了显示好看做脆弱的 YAML 解析。
+                return {**result, "source": source, "lines": lines}
+            errors.append(f"{source}: {result.get('error', 'unknown error')}")
+
+        return {
+            "success": False,
+            "source": "controller_query_failed",
+            "lines": [],
+            "error": "；".join(errors),
         }
 
     def _run_ros2(self, args: list[str], timeout: Optional[float] = None) -> dict[str, Any]:
