@@ -3,6 +3,7 @@ from xml.etree import ElementTree
 
 import mujoco
 import yaml
+import tomllib
 
 
 def test_bundled_mujoco_panda_scene_loads():
@@ -146,3 +147,17 @@ def test_arm_mujoco_launch_starts_moveit_py_server():
 
     assert "rosa_arm_moveit_server" in launch_text
     assert '{"use_sim_time": True}' in launch_text
+
+
+def test_project_dependencies_include_rosidl_python_tools():
+    """确认项目 venv 里包含 ROS2 service 生成需要的 Python 模板工具。
+
+    colcon 在用户 source 项目 `.venv` 后会用这个 venv 的 Python 执行 `rosidl_adapter`。
+    `rosidl_adapter` 会 `import em`，这个模块由 PyPI 包 `empy` 提供；如果依赖里没有它，
+    VM 会在构建 `MovePose.srv` 时失败。
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    pyproject = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert any(dependency.startswith("empy") for dependency in dependencies)

@@ -261,6 +261,12 @@ wheels = [
 ]
 
 [[package]]
+name = "empy"
+version = "3.3.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/95/88ed47cb7da88569a78b7d6fb9420298df7e99997810c844a924d96d3c08/empy-3.3.4.tar.gz", hash = "sha256:73ac49785b601479df4ea18a7c79bc1304a8a7c34c02b9472cf1206ae88f01b3", size = 62857, upload-time = "2019-03-21T20:22:03.951Z" }
+
+[[package]]
 name = "etils"
 version = "1.13.0"
 source = { registry = "https://pypi.org/simple" }
@@ -514,6 +520,7 @@ source = { editable = "." }
 dependencies = [
     { name = "catkin-pkg" },
     { name = "cffi" },
+    { name = "empy" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langgraph" },
@@ -535,6 +542,7 @@ dependencies = [
 requires-dist = [
     { name = "catkin-pkg", specifier = ">=1.0.0" },
     { name = "cffi" },
+    { name = "empy", specifier = ">=3.3.4,<4" },
     { name = "langchain", specifier = ">=1.0,<2" },
     { name = "langchain-core", specifier = ">=1.0,<2" },
     { name = "langgraph", specifier = ">=1.0,<2" },
