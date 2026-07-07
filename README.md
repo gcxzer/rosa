@@ -18,8 +18,6 @@ ArmAgent 在 MuJoCo 中执行连续机械臂动作：
 
 ![ArmAgent MuJoCo demo](assets/arm-agent-mujoco-demo.gif)
 
-完整录屏可以打开 [assets/arm-agent-mujoco-demo.mov](assets/arm-agent-mujoco-demo.mov)。
-
 ## Requirements
 
 框架基础依赖：
