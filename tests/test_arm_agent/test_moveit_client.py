@@ -368,6 +368,54 @@ position:
     assert '"max_effort": 0.0' in client.commands[1][-1]
 
 
+def test_set_gripper_width_prefers_parallel_type_when_action_lists_multiple_types():
+    """同名夹爪 action 同时报告新旧 type 时，应优先使用 Jazzy 的 ParallelGripperCommand。"""
+
+    class MultiTypeGripperClient(StubMoveItRuntimeClient):
+        def __init__(self):
+            super().__init__({})
+
+        def _run_ros2(self, args, timeout=None):
+            del timeout
+            self.commands.append(list(args))
+            if args == ["ros2", "action", "list", "-t"]:
+                return {
+                    "success": True,
+                    "lines": [
+                        "/panda_hand_controller/gripper_cmd "
+                        "[control_msgs/action/GripperCommand, control_msgs/action/ParallelGripperCommand]"
+                    ],
+                }
+            if args[:5] == [
+                "ros2",
+                "action",
+                "send_goal",
+                "/panda_hand_controller/gripper_cmd",
+                "control_msgs/action/ParallelGripperCommand",
+            ]:
+                return {"success": True, "output": "Goal accepted", "lines": ["Goal accepted"]}
+            if args[:5] == ["ros2", "topic", "echo", "/joint_states", "--once"]:
+                return {
+                    "success": True,
+                    "output": """
+---
+name:
+- panda_finger_joint1
+- panda_finger_joint2
+position:
+- 0.035
+- 0.035
+---
+""",
+                }
+            return {"success": False, "error": f"unexpected command: {' '.join(args)}"}
+
+    result = MultiTypeGripperClient().set_gripper_width(0.07)
+
+    assert result["success"] is True
+    assert result["action_type"] == "control_msgs/action/ParallelGripperCommand"
+
+
 def test_set_gripper_width_rejects_out_of_range_width():
     result = StubMoveItRuntimeClient({}).set_gripper_width(0.2)
 

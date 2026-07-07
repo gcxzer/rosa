@@ -213,14 +213,33 @@ class MoveItRuntimeClient:
         action_type = GRIPPER_ACTION_TYPE
         action_list = self._run_ros2(["ros2", "action", "list", "-t"], timeout=self.timeout + 2.0)
         if action_list.get("success"):
-            matched_type = ""
+            matched_types: list[str] = []
             for line in action_list.get("lines", []):
                 if line.startswith(f"{GRIPPER_ACTION_NAME} "):
                     match = re.search(r"\[([^\]]+)\]", line)
-                    matched_type = match.group(1).strip() if match else ""
+                    if match:
+                        # `ros2 action list -t` 正常是一条 action 对一个 type，但你的 VM 里同名
+                        # gripper action 会显示成 `[GripperCommand, ParallelGripperCommand]`。
+                        # 这通常是旧 MoveIt controller 配置和 Jazzy controller 同时在 graph 里留下
+                        # type 信息。这里拆成候选列表，再按当前 Jazzy controller 的 type 优先选择。
+                        matched_types = [
+                            action_type.strip()
+                            for action_type in match.group(1).split(",")
+                            if action_type.strip()
+                        ]
                     break
-            if matched_type:
-                action_type = matched_type
+            if matched_types:
+                if GRIPPER_ACTION_TYPE in matched_types:
+                    action_type = GRIPPER_ACTION_TYPE
+                elif LEGACY_GRIPPER_ACTION_TYPE in matched_types:
+                    action_type = LEGACY_GRIPPER_ACTION_TYPE
+                else:
+                    return {
+                        "success": False,
+                        "error": f"不支持的夹爪 action type：{', '.join(matched_types)}",
+                        "supported_action_types": [GRIPPER_ACTION_TYPE, LEGACY_GRIPPER_ACTION_TYPE],
+                        "action": GRIPPER_ACTION_NAME,
+                    }
             else:
                 return {
                     "success": False,
