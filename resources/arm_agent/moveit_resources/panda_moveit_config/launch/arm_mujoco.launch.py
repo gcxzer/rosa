@@ -115,18 +115,25 @@ def generate_launch_description():
     mujoco_control_node = Node(
         package="mujoco_ros2_control",
         executable="ros2_control_node",
-        name="mujoco_ros2_control_node",
         emulate_tty=True,
         output="both",
         parameters=[
             {"use_sim_time": True},
             ParameterFile(controllers_path),
         ],
-        remappings=(
-            [("~/robot_description", "/robot_description")]
-            if os.environ.get("ROS_DISTRO") == "humble"
-            else []
-        ),
+        # 这里不要给 executable 强行改名。mujoco_ros2_control 的外层进程是
+        # controller_manager，内部 hardware plugin 会自己创建 mujoco_ros2_control_node。
+        # 如果外层也叫 mujoco_ros2_control_node，会同时造成 node 名冲突、spawner 仍找
+        # /controller_manager 失败，以及 robot_description topic 等不到数据。
+        #
+        # controller_manager 在不同 ROS2/ros2_control 版本里可能订阅相对名
+        # `robot_description` 或私有名 `~/robot_description`。两种都显式接到
+        # robot_state_publisher 发布的全局 `/robot_description`，避免 MuJoCo 窗口
+        # 闪一下后一直等待机器人描述。
+        remappings=[
+            ("robot_description", "/robot_description"),
+            ("~/robot_description", "/robot_description"),
+        ],
         on_exit=Shutdown(),
     )
 
