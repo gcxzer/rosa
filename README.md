@@ -12,6 +12,15 @@ ROSA 是一个面向 ROS2 机器人的自然语言 Agent 框架。它用 Codex +
 - `ArmAgent`：面向机械臂的实现，当前默认目标是 Franka Emika Panda，使用 MoveIt2 规划，
   使用 MuJoCo / `mujoco_ros2_control` 做仿真可视化。
 
+## Demo
+
+ArmAgent 在 MuJoCo 中执行连续机械臂动作：
+
+<video src="assets/arm-agent-mujoco-demo.mov" controls></video>
+
+如果当前 Markdown 页面不直接播放视频，可以打开
+[assets/arm-agent-mujoco-demo.mov](assets/arm-agent-mujoco-demo.mov)。
+
 ## Requirements
 
 框架基础依赖：

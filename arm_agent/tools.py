@@ -20,7 +20,7 @@ from .moveit_client import (
 
 
 _CLIENT_FACTORY: Callable[[], Any] = MoveItRuntimeClient
-MAX_ARM_PLAN_STEPS = 12
+MAX_ARM_PLAN_STEPS = 15
 _PLAN_ACTIONS = {
     "move_named",
     "move_joint",

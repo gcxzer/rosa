@@ -5,7 +5,7 @@
 
 运行示例：
 
-    uv run python main.py --agent turtle "画一个边长为 2 的正方形"
+    uv run python main.py --agent arm "跳个舞看看，10个动作，不控制夹爪"  
     uv run python main.py --agent arm "检查机械臂运行栈是否就绪"
     uv run python main.py --agent turtle --session-id 20260706_120000_abcd1234
 """
