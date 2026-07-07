@@ -194,6 +194,58 @@ String value is: <robot name="panda">
     assert result["metadata"]["moveit_py_bypassed"] is True
 
 
+def test_robot_description_semantic_is_cached_for_repeated_named_targets():
+    """同一个 plan 里连续 named target 不应反复读取 `/move_group` 的 SRDF 参数。
+
+    VM 实测里第一步 `extended` 可以成功，但第二步 `home` 再次执行
+    `ros2 param get /move_group robot_description_semantic` 时可能超时。runtime client 成功读到
+    一次 SRDF 后应该缓存本轮 XML，连续动作直接复用这份配置。
+    """
+    client = StubMoveItRuntimeClient(
+        {
+            ("ros2", "param", "get", "/move_group", "robot_description_semantic"): {
+                "success": True,
+                "output": """
+String value is: <robot name="panda">
+  <group_state group="panda_arm" name="extended">
+    <joint name="panda_joint1" value="1.1"/>
+    <joint name="panda_joint2" value="1.2"/>
+    <joint name="panda_joint3" value="1.3"/>
+    <joint name="panda_joint4" value="1.4"/>
+    <joint name="panda_joint5" value="1.5"/>
+    <joint name="panda_joint6" value="1.6"/>
+    <joint name="panda_joint7" value="1.7"/>
+  </group_state>
+  <group_state group="panda_arm" name="home">
+    <joint name="panda_joint1" value="0.1"/>
+    <joint name="panda_joint2" value="0.2"/>
+    <joint name="panda_joint3" value="0.3"/>
+    <joint name="panda_joint4" value="0.4"/>
+    <joint name="panda_joint5" value="0.5"/>
+    <joint name="panda_joint6" value="0.6"/>
+    <joint name="panda_joint7" value="0.7"/>
+  </group_state>
+</robot>
+""",
+            },
+        }
+    )
+
+    extended = client.plan_to_named_target("panda_arm", "extended")
+    home = client.plan_to_named_target("panda_arm", "home")
+    semantic_reads = [
+        command
+        for command in client.commands
+        if command == ["ros2", "param", "get", "/move_group", "robot_description_semantic"]
+    ]
+
+    assert extended["success"] is True
+    assert home["success"] is True
+    assert extended["raw_plan"]["joint_goal"]["panda_joint7"] == 1.7
+    assert home["raw_plan"]["joint_goal"]["panda_joint7"] == 0.7
+    assert semantic_reads == [["ros2", "param", "get", "/move_group", "robot_description_semantic"]]
+
+
 def test_execute_direct_joint_trajectory_publishes_controller_topic(monkeypatch):
     """direct trajectory 执行时应发布给 ros2_control，而不是先加载 MoveItPy。"""
 

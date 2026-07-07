@@ -50,6 +50,7 @@ class MoveItRuntimeClient:
         self.end_effector_link = end_effector_link
         self.timeout = timeout
         self._moveit_py = None
+        self._robot_description_semantic: Optional[str] = None
 
     def check_readiness(self) -> dict[str, Any]:
         nodes = self._run_ros2(["ros2", "node", "list"])
@@ -773,8 +774,18 @@ class MoveItRuntimeClient:
         ArmAgent 的 `arm_get_planning_groups()`、`arm_get_named_targets()`、
         `arm_get_end_effector_link()` 都需要这段 SRDF，所以这里单独保留为复用方法。
         """
+        if self._robot_description_semantic:
+            return {
+                "success": True,
+                "value": self._robot_description_semantic,
+                "cached": True,
+            }
+
         # 通过 ROS2 CLI 读取 `/move_group` 节点上的参数。这里不用直接 import MoveIt，
         # 是为了让“只查看配置”的工具在没有 Python MoveIt adapter 时也能工作。
+        # 同一个 ArmAgent plan 里可能连续移动到多个 named target；如果每一步都重新
+        # `ros2 param get`，VM 里的 `/move_group` 参数服务偶尔会在第二次读取时超时。
+        # 因此第一次成功读取并剥出 SRDF XML 后缓存到当前 runtime client，后续步骤直接复用。
         result = self._run_ros2(["ros2", "param", "get", "/move_group", "robot_description_semantic"])
         if not result.get("success"):
             return {
@@ -793,7 +804,8 @@ class MoveItRuntimeClient:
                 break
         if not value:
             return {"success": False, "error": "robot_description_semantic 为空。"}
-        return {"success": True, "value": value}
+        self._robot_description_semantic = value
+        return {"success": True, "value": value, "cached": False}
 
     def _load_moveit_py(self) -> dict[str, Any]:
         if self._moveit_py is not None:
