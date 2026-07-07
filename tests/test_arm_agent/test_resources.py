@@ -25,6 +25,35 @@ def test_bundled_mujoco_panda_scene_loads():
     assert {f"panda_joint{index}" for index in range(1, 8)}.issubset(moveit_joint_names)
 
 
+def test_bundled_mujoco_tendon_actuators_match_joint_names():
+    """确认 MuJoCo tendon actuator 能被 mujoco_ros2_control 映射到 ROS joint。
+
+    `mujoco_ros2_control` 对普通 joint actuator 可以通过 `joint="..."` 反查 joint；
+    但 tendon actuator 没有这个属性，它会强制要求 actuator 的 `name` 等于某个 joint 名。
+    如果这里保留上游 Menagerie 的 `actuator8`，运行时会报：
+    `Tendon actuator 'actuator8' has no matching joint`，MuJoCo 窗口也会闪退。
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    model_path = (
+        repo_root
+        / "resources"
+        / "arm_agent"
+        / "mujoco_menagerie"
+        / "franka_emika_panda"
+        / "panda_moveit.xml"
+    )
+    root = ElementTree.parse(model_path).getroot()
+    joint_names = {joint.attrib["name"] for joint in root.findall(".//joint") if "name" in joint.attrib}
+    tendon_actuator_names = {
+        actuator.attrib["name"]
+        for actuator in root.findall(".//actuator/general")
+        if "tendon" in actuator.attrib and "name" in actuator.attrib
+    }
+
+    assert tendon_actuator_names
+    assert tendon_actuator_names.issubset(joint_names)
+
+
 def test_bundled_moveit_panda_resources_are_present_and_parseable():
     """确认 GitHub 仓库内置的 Panda MoveIt URDF/SRDF/config 没有缺文件。"""
     repo_root = Path(__file__).resolve().parents[2]
