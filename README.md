@@ -3,9 +3,6 @@
 本项目最初 fork 自 [NASA JPL ROSA](https://github.com/nasa-jpl/rosa)，当前版本在原项目基础上改造成
 ROS2 + Codex + LangChain v1 的机器人 Agent 框架。
 
-ROSA 是一个面向 ROS2 机器人的自然语言 Agent 框架。它用 Codex + LangChain 调用 ROS2 工具，
-支持读取机器人运行状态、调用平台专用工具、保存多轮 session，并把具体机器人能力封装成独立 agent。
-
 这个仓库当前包含两个基于 ROSA 框架的实现：
 
 - `TurtleAgent`：面向 `turtlesim` 的轻量示例，用来验证 ROS2 工具调用、绘图和多轮对话。
