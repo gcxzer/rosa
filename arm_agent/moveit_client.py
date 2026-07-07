@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import ast
 import importlib
+import json
 import os
 import re
 import subprocess
+import time
 from typing import Any, Optional
 from xml.etree import ElementTree
 
@@ -261,45 +263,110 @@ class MoveItRuntimeClient:
         return {"success": True, "checked": "numeric"}
 
     def plan_to_named_target(self, planning_group: str, target_name: str) -> dict[str, Any]:
-        runtime = self._load_moveit_py()
-        if not runtime.get("success"):
-            return runtime
+        if planning_group != DEFAULT_PLANNING_GROUP:
+            return {
+                "success": False,
+                "error": f"当前直接执行 adapter 只支持 `{DEFAULT_PLANNING_GROUP}`，收到 `{planning_group}`。",
+            }
+
+        semantic = self._read_robot_description_semantic()
+        if not semantic.get("success"):
+            return semantic
 
         try:
-            planning_component = runtime["moveit_py"].get_planning_component(planning_group)
-            planning_component.set_start_state_to_current_state()
-            planning_component.set_goal_state(configuration_name=target_name)
-            plan_result = planning_component.plan()
-        except Exception as error:
-            return {"success": False, "error": f"MoveIt2 named target 规划失败：{error}"}
+            root = ElementTree.fromstring(semantic["value"])
+        except ElementTree.ParseError as error:
+            return {"success": False, "error": f"解析 robot_description_semantic 失败：{error}"}
 
-        return _normalize_plan_result(
-            plan_result,
-            summary=f"已规划到 named target `{target_name}`。",
-            adapter="moveit_py",
-        )
+        joint_goal: dict[str, float] = {}
+        for group_state in root.findall("group_state"):
+            if (
+                str(group_state.get("group") or "") == planning_group
+                and str(group_state.get("name") or "") == target_name
+            ):
+                # SRDF 的 named target 本质是一组关节角。当前 MuJoCo + MoveItPy 组合里，
+                # MoveItPy 一旦打开 `use_sim_time=True` 会触发 upstream 的
+                # `qos_overrides./clock.subscription.durability` abort；不开仿真时间又会把
+                # `/joint_states` 判断成过期。因此第一阶段对 named target 直接把 SRDF 关节角
+                # 发送给 ros2_control 的 JointTrajectoryController，绕开 MoveItPy 的执行管理器。
+                for joint in group_state.findall("joint"):
+                    name = str(joint.get("name") or "").strip()
+                    if name:
+                        joint_goal[name] = float(str(joint.get("value") or "0"))
+                break
+
+        if not joint_goal:
+            return {
+                "success": False,
+                "error": f"没有在 `{planning_group}` 里找到 named target `{target_name}`。",
+            }
+
+        return {
+            "success": True,
+            "status": "planned",
+            "summary": f"已解析 named target `{target_name}` 为直接关节轨迹。",
+            "raw_plan": {
+                "adapter": "joint_trajectory_topic",
+                "joint_goal": joint_goal,
+                "duration": 3.0,
+            },
+            "metadata": {
+                "adapter": "joint_trajectory_topic",
+                "source": "robot_description_semantic",
+                "moveit_py_bypassed": True,
+            },
+        }
 
     def plan_to_joint_goal(self, planning_group: str, joint_goal: dict[str, float]) -> dict[str, Any]:
-        runtime = self._load_moveit_py()
-        if not runtime.get("success"):
-            return runtime
+        if planning_group != DEFAULT_PLANNING_GROUP:
+            return {
+                "success": False,
+                "error": f"当前直接执行 adapter 只支持 `{DEFAULT_PLANNING_GROUP}`，收到 `{planning_group}`。",
+            }
 
-        try:
-            robot_state = runtime["robot_state_class"](runtime["moveit_py"].get_robot_model())
-            joint_model_group = runtime["moveit_py"].get_robot_model().get_joint_model_group(planning_group)
-            robot_state.set_joint_group_positions(joint_model_group, joint_goal)
-            planning_component = runtime["moveit_py"].get_planning_component(planning_group)
-            planning_component.set_start_state_to_current_state()
-            planning_component.set_goal_state(robot_state=robot_state)
-            plan_result = planning_component.plan()
-        except Exception as error:
-            return {"success": False, "error": f"MoveIt2 joint goal 规划失败：{error}"}
+        required_joints = [f"panda_joint{index}" for index in range(1, 8)]
+        current_state = self.get_joint_states()
+        if not current_state.get("success"):
+            return {
+                "success": False,
+                "error": "无法读取当前 joint states，不能补齐 joint goal。",
+                "joint_states": current_state,
+            }
 
-        return _normalize_plan_result(
-            plan_result,
-            summary="已规划到 joint goal。",
-            adapter="moveit_py",
-        )
+        current_joints = dict(current_state.get("joint_states") or {})
+        missing_joints = [
+            joint_name
+            for joint_name in required_joints
+            if joint_name not in joint_goal and joint_name not in current_joints
+        ]
+        if missing_joints:
+            return {
+                "success": False,
+                "error": f"joint goal 缺少这些关节，且当前状态里也没有：{missing_joints}",
+            }
+
+        # JointTrajectoryController 默认通常不接受 partial joint goal。这里允许用户只给一两个
+        # 关节，是因为工具会用当前 `/joint_states` 补齐其余 Panda arm 关节，最后发出的仍是
+        # 完整 7 轴 trajectory。
+        full_joint_goal = {
+            joint_name: float(joint_goal[joint_name] if joint_name in joint_goal else current_joints[joint_name])
+            for joint_name in required_joints
+        }
+        return {
+            "success": True,
+            "status": "planned",
+            "summary": "已生成直接关节轨迹。",
+            "raw_plan": {
+                "adapter": "joint_trajectory_topic",
+                "joint_goal": full_joint_goal,
+                "duration": 3.0,
+            },
+            "metadata": {
+                "adapter": "joint_trajectory_topic",
+                "source": "direct_joint_goal",
+                "moveit_py_bypassed": True,
+            },
+        }
 
     def plan_to_pose_goal(
         self,
@@ -345,12 +412,12 @@ class MoveItRuntimeClient:
 
         ArmAgent 现在不再把 plan 暴露成用户可见的 `plan_id`。公开 tool 会先调用
         `plan_to_*()` 得到本轮 trajectory，再立刻把这个 result 传进来执行。这样用户看到的是
-        “移动到目标”这一件事；MoveIt 内部仍然按正常流程先规划 trajectory，再交给控制器执行。
-        """
-        runtime = self._load_moveit_py()
-        if not runtime.get("success"):
-            return runtime
+        “移动到目标”这一件事。
 
+        注意：Jazzy 当前的 MoveItPy + `use_sim_time=True` 会在 C++ 层 abort 进程；所以
+        named target / joint goal 会生成 `joint_trajectory_topic` direct plan，直接交给
+        ros2_control 的 `panda_arm_controller`。只有非 direct plan 才会进入 MoveItPy execute。
+        """
         if not plan_result.get("success"):
             return {"success": False, "error": "规划未成功，不能执行。", "planning": plan_result}
         raw_plan = plan_result.get("raw_plan")
@@ -358,8 +425,58 @@ class MoveItRuntimeClient:
             return {"success": False, "error": "规划结果中没有 raw_plan，不能执行。", "planning": plan_result}
 
         try:
-            trajectory = getattr(raw_plan, "trajectory", raw_plan)
-            runtime["moveit_py"].execute(trajectory, controllers=[])
+            if isinstance(raw_plan, dict) and raw_plan.get("adapter") == "joint_trajectory_topic":
+                joint_goal = dict(raw_plan.get("joint_goal") or {})
+                joint_names = [f"panda_joint{index}" for index in range(1, 8)]
+                missing_joints = [joint_name for joint_name in joint_names if joint_name not in joint_goal]
+                if missing_joints:
+                    return {
+                        "success": False,
+                        "error": f"直接关节轨迹缺少这些 Panda arm 关节：{missing_joints}",
+                        "planning": plan_result,
+                    }
+
+                duration = float(raw_plan.get("duration", 3.0))
+                sec = max(1, int(duration))
+                nanosec = max(0, int((duration - sec) * 1_000_000_000))
+                payload = {
+                    "joint_names": joint_names,
+                    "points": [
+                        {
+                            "positions": [float(joint_goal[joint_name]) for joint_name in joint_names],
+                            "time_from_start": {"sec": sec, "nanosec": nanosec},
+                        }
+                    ],
+                }
+                publish_result = self._run_ros2(
+                    [
+                        "ros2",
+                        "topic",
+                        "pub",
+                        "--once",
+                        "/panda_arm_controller/joint_trajectory",
+                        "trajectory_msgs/msg/JointTrajectory",
+                        json.dumps(payload),
+                    ],
+                    timeout=self.timeout + 4.0,
+                )
+                if not publish_result.get("success"):
+                    return {
+                        "success": False,
+                        "error": f"发布 joint trajectory 失败：{publish_result.get('error')}",
+                        "planning": plan_result,
+                    }
+
+                # `ros2 topic pub --once` 只保证消息发出去，不代表控制器已经走完轨迹。
+                # 这里等待 trajectory 的 `time_from_start`，再读取最终 joint state，避免用户看到
+                # “已执行”但状态还是起点。
+                time.sleep(duration + 0.2)
+            else:
+                runtime = self._load_moveit_py()
+                if not runtime.get("success"):
+                    return runtime
+                trajectory = getattr(raw_plan, "trajectory", raw_plan)
+                runtime["moveit_py"].execute(trajectory, controllers=[])
         except Exception as error:
             return {"success": False, "error": f"MoveIt2 执行 plan 失败：{error}"}
 
@@ -552,14 +669,11 @@ class MoveItRuntimeClient:
             )
 
             moveit_config_dict = moveit_config.to_dict()
-            # `arm_mujoco.launch.py` 里 MuJoCo、controller_manager、robot_state_publisher 和
-            # move_group 都使用 `/clock` 仿真时间。ArmAgent 这里新建的 MoveItPy node 如果仍然
-            # 使用系统墙钟时间，就会把 `/joint_states` 里的仿真时间戳当成“10 秒前的旧状态”，
-            # 然后在 planning scene monitor 初始化阶段失败：
-            # `Requested time 1783..., latest received state has time 80...`。
-            # 所以这里必须像 launch 文件里的 Node(parameters=[..., {"use_sim_time": True}])
-            # 一样，把当前 Python MoveIt node 也切到仿真时间。
-            moveit_config_dict["use_sim_time"] = True
+            # 不在这里设置 `use_sim_time=True`。MoveItPy 当前版本存在 upstream 问题：
+            # 仿真时间会让 TrajectoryExecutionManager 拒绝 `/clock` 的 QoS override 参数，
+            # 然后 C++ 侧直接 abort Python 进程。named target / joint goal 已经在上层走
+            # ros2_control direct trajectory fallback；pose goal 如果需要 MoveItPy，宁可返回
+            # 一个可捕获的初始化/规划失败，也不能让整个 agent 进程崩掉。
             moveit_py = planning_module.MoveItPy(
                 node_name="rosa_arm_agent",
                 config_dict=moveit_config_dict,

@@ -20,14 +20,15 @@ ARM_SYSTEM_PROMPTS = RobotSystemPrompts(
     ),
     critical_instructions=(
         "用户要求机械臂移动时，直接调用 arm_move_to_named_target、arm_move_to_joint_goal "
-        "或 arm_move_to_pose_goal；这些工具内部会用 MoveIt2 规划 trajectory 并立即执行。"
+        "或 arm_move_to_pose_goal。named target 和 joint goal 工具会把明确关节目标交给受控的 "
+        "ros2_control trajectory adapter 执行；pose goal 仍依赖 MoveIt2/MoveItPy 规划。"
         "不要再要求用户先拿 plan_id，也不要再提示用户二次确认 execute。"
         "如果 readiness、MoveIt2 规划、碰撞、关节限制或控制器状态检查失败，必须停止后续动作并说明原因。"
     ),
     constraints_and_guardrails=(
         "任何 pose 目标必须带明确坐标系；如果用户没有给坐标系，默认使用文档约定的 base frame，"
-        "并在回答中说明这个假设。所有关节目标必须是数值，并交给工具检查关节限制。"
-        "不要直接发布低层 joint trajectory 或速度命令绕过 MoveIt2。"
+        "并在回答中说明这个假设。所有关节目标必须是数值，并交给工具检查。"
+        "不要自己调用通用 ROS2 topic 工具发布速度或关节命令；移动必须通过 ArmAgent 的移动工具。"
     ),
     about_your_capabilities=(
         "常用工具包括：arm_check_readiness 检查 MoveIt2、controller manager、joint states、"

@@ -171,7 +171,9 @@ def arm_move_to_named_target(
     - 失败时返回 `success=False` 和错误原因；规划失败时不会执行。
 
     说明：
-    - 这个工具对用户是“一步执行”：内部先调用 MoveIt2 规划 trajectory，再立即执行。
+    - 这个工具对用户是“一步执行”：内部把 SRDF named target 解析成明确关节目标，再立即执行。
+    - 当前 MuJoCo + Jazzy MoveItPy 存在仿真时间 abort 问题，named target 先直接走
+      `panda_arm_controller/joint_trajectory`，避免 MoveItPy 执行管理器把 agent 进程带崩。
     - 不再返回 `plan_id`，也不需要再调用单独的 execute 工具。
     """
     readiness_error = _readiness_error(require_readiness)
@@ -208,7 +210,9 @@ def arm_move_to_joint_goal(
     - 如果 joint goal 为空、非数字或 MoveIt2 规划失败，返回 `success=False`，不会执行。
 
     说明：
-    - 工具会先做最小数值校验，再交给 MoveIt2 做真正的关节限制、碰撞和可达性检查。
+    - 工具会先做最小数值校验，用当前 `/joint_states` 补齐未指定关节，再发给
+      `panda_arm_controller/joint_trajectory`。
+    - 这里不会做 MoveIt 碰撞规划；只适合明确、安全的关节目标。
     - 这个工具内部完成规划并执行，不需要 `plan_id`。
     """
     readiness_error = _readiness_error(require_readiness)
