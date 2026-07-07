@@ -25,6 +25,8 @@ DEFAULT_END_EFFECTOR_LINK = "panda_hand"
 DEFAULT_GRIPPER_OPENING_WIDTH = 0.07
 MAX_GRIPPER_OPENING_WIDTH = 0.08
 GRIPPER_ACTION_NAME = "/panda_hand_controller/gripper_cmd"
+GRIPPER_ACTION_TYPE = "control_msgs/action/ParallelGripperCommand"
+LEGACY_GRIPPER_ACTION_TYPE = "control_msgs/action/GripperCommand"
 
 
 class MoveItRuntimeClient:
@@ -203,18 +205,58 @@ class MoveItRuntimeClient:
                 "requested_width": width,
             }
 
-        # ROS2 的 GripperCommand action 对这个 Panda controller 命令的是单个 finger joint position。
-        # 面向用户的 width 用“两指之间总开口宽度”表达，因此发送给 controller 前要除以 2。
-        # `max_effort=0.0` 是 ROS gripper controller 的常见默认语义：不额外限制最大努力值。
+        # Jazzy+ 的 `parallel_gripper_action_controller/GripperActionController` 使用
+        # `control_msgs/action/ParallelGripperCommand`，而 Humble 的旧
+        # `position_controllers/GripperActionController` 使用 `control_msgs/action/GripperCommand`。
+        # 两者 action 名都通常是 `/panda_hand_controller/gripper_cmd`，但 action type 不同；
+        # 如果用错 type，`ros2 action send_goal` 会一直等不到匹配的 server，最后表现为超时。
+        action_type = GRIPPER_ACTION_TYPE
+        action_list = self._run_ros2(["ros2", "action", "list", "-t"], timeout=self.timeout + 2.0)
+        if action_list.get("success"):
+            matched_type = ""
+            for line in action_list.get("lines", []):
+                if line.startswith(f"{GRIPPER_ACTION_NAME} "):
+                    match = re.search(r"\[([^\]]+)\]", line)
+                    matched_type = match.group(1).strip() if match else ""
+                    break
+            if matched_type:
+                action_type = matched_type
+            else:
+                return {
+                    "success": False,
+                    "error": f"没有发现夹爪 action server：{GRIPPER_ACTION_NAME}",
+                    "available_actions": action_list.get("lines", []),
+                }
+
+        # 面向用户的 width 用“两指之间总开口宽度”表达；Panda 当前 controller 命令的是
+        # `panda_finger_joint1` 这个单侧 finger joint position，所以发送前要除以 2。
         command_position = width / 2.0
-        payload = {"command": {"position": command_position, "max_effort": max_effort}}
+        if action_type == GRIPPER_ACTION_TYPE:
+            payload = {
+                "command": {
+                    "name": ["panda_finger_joint1"],
+                    "position": [command_position],
+                    "velocity": [],
+                    "effort": [max_effort] if max_effort > 0.0 else [],
+                }
+            }
+        elif action_type == LEGACY_GRIPPER_ACTION_TYPE:
+            payload = {"command": {"position": command_position, "max_effort": max_effort}}
+        else:
+            return {
+                "success": False,
+                "error": f"不支持的夹爪 action type：{action_type}",
+                "supported_action_types": [GRIPPER_ACTION_TYPE, LEGACY_GRIPPER_ACTION_TYPE],
+                "action": GRIPPER_ACTION_NAME,
+            }
+
         result = self._run_ros2(
             [
                 "ros2",
                 "action",
                 "send_goal",
                 GRIPPER_ACTION_NAME,
-                "control_msgs/action/GripperCommand",
+                action_type,
                 json.dumps(payload),
             ],
             timeout=self.timeout + 8.0,
@@ -226,6 +268,7 @@ class MoveItRuntimeClient:
                 "target_width": width,
                 "command_position": command_position,
                 "action": GRIPPER_ACTION_NAME,
+                "action_type": action_type,
             }
 
         return {
@@ -237,6 +280,7 @@ class MoveItRuntimeClient:
             "max_effort": max_effort,
             "controller": "panda_hand_controller",
             "action": GRIPPER_ACTION_NAME,
+            "action_type": action_type,
             "raw_action_result": result.get("output", ""),
             "final_state": self.get_gripper_state(),
         }

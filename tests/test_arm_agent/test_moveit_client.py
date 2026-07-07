@@ -276,12 +276,19 @@ def test_set_gripper_width_sends_gripper_action_and_reports_state():
         def _run_ros2(self, args, timeout=None):
             del timeout
             self.commands.append(list(args))
+            if args == ["ros2", "action", "list", "-t"]:
+                return {
+                    "success": True,
+                    "lines": [
+                        "/panda_hand_controller/gripper_cmd [control_msgs/action/ParallelGripperCommand]"
+                    ],
+                }
             if args[:5] == [
                 "ros2",
                 "action",
                 "send_goal",
                 "/panda_hand_controller/gripper_cmd",
-                "control_msgs/action/GripperCommand",
+                "control_msgs/action/ParallelGripperCommand",
             ]:
                 return {"success": True, "output": "Goal accepted\nResult: success", "lines": ["Goal accepted"]}
             if args[:5] == ["ros2", "topic", "echo", "/joint_states", "--once"]:
@@ -306,9 +313,59 @@ position:
     assert result["success"] is True
     assert result["target_width"] == 0.06
     assert result["command_position"] == 0.03
+    assert result["action_type"] == "control_msgs/action/ParallelGripperCommand"
     assert result["final_state"]["estimated_width"] == 0.06
-    assert '"position": 0.03' in client.commands[0][-1]
-    assert '"max_effort": 2.0' in client.commands[0][-1]
+    assert '"name": ["panda_finger_joint1"]' in client.commands[1][-1]
+    assert '"position": [0.03]' in client.commands[1][-1]
+    assert '"effort": [2.0]' in client.commands[1][-1]
+
+
+def test_set_gripper_width_supports_legacy_gripper_action_type():
+    """Humble 旧 controller 仍使用 control_msgs/action/GripperCommand。"""
+
+    class LegacyGripperClient(StubMoveItRuntimeClient):
+        def __init__(self):
+            super().__init__({})
+
+        def _run_ros2(self, args, timeout=None):
+            del timeout
+            self.commands.append(list(args))
+            if args == ["ros2", "action", "list", "-t"]:
+                return {
+                    "success": True,
+                    "lines": ["/panda_hand_controller/gripper_cmd [control_msgs/action/GripperCommand]"],
+                }
+            if args[:5] == [
+                "ros2",
+                "action",
+                "send_goal",
+                "/panda_hand_controller/gripper_cmd",
+                "control_msgs/action/GripperCommand",
+            ]:
+                return {"success": True, "output": "Goal accepted", "lines": ["Goal accepted"]}
+            if args[:5] == ["ros2", "topic", "echo", "/joint_states", "--once"]:
+                return {
+                    "success": True,
+                    "output": """
+---
+name:
+- panda_finger_joint1
+- panda_finger_joint2
+position:
+- 0.02
+- 0.02
+---
+""",
+                }
+            return {"success": False, "error": f"unexpected command: {' '.join(args)}"}
+
+    client = LegacyGripperClient()
+    result = client.set_gripper_width(0.04)
+
+    assert result["success"] is True
+    assert result["action_type"] == "control_msgs/action/GripperCommand"
+    assert '"position": 0.02' in client.commands[1][-1]
+    assert '"max_effort": 0.0' in client.commands[1][-1]
 
 
 def test_set_gripper_width_rejects_out_of_range_width():

@@ -333,7 +333,9 @@ def arm_open_gripper(
     - 失败时返回 `success=False` 和错误原因。
 
     说明：
-    - 工具内部通过 `/panda_hand_controller/gripper_cmd` 发送 `control_msgs/action/GripperCommand`。
+    - 工具内部通过 `/panda_hand_controller/gripper_cmd` 发送夹爪 action。
+    - Jazzy+ 会自动使用 `control_msgs/action/ParallelGripperCommand`；Humble 旧 controller
+      会自动使用 `control_msgs/action/GripperCommand`。
     - 用户说“打开夹爪”“松开”“张开夹头”时，应优先调用这个工具。
     """
     readiness_error = _readiness_error(require_readiness)
@@ -386,7 +388,7 @@ def arm_set_gripper_width(
 
     说明：
     - 用户给出具体开口，例如“夹爪打开到 3 cm / 0.03 m”时，调用这个工具。
-    - 这个工具不做抓取语义判断；只是把宽度命令发给 `panda_hand_controller`。
+    - 这个工具不做抓取语义判断；只是把宽度命令发给 `panda_hand_controller` 的 action server。
     """
     readiness_error = _readiness_error(require_readiness)
     if readiness_error:
