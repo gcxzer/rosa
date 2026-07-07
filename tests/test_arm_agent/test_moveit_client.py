@@ -103,6 +103,66 @@ def test_readiness_accepts_visible_controller_graph_when_cli_fails():
     assert "service call failed" in readiness["detected"]["controller_query_error"]
 
 
+def test_joint_states_parser_accepts_ros2_block_yaml_with_status_prefix():
+    """`ros2 topic echo` 的 block YAML 输出应能解析，即使前面有 DDS 状态提示。"""
+    client = StubMoveItRuntimeClient(
+        {
+            (
+                "ros2",
+                "topic",
+                "echo",
+                "/joint_states",
+                "--once",
+                "--spin-time",
+                "0.1",
+            ): {
+                "success": True,
+                "output": """
+A message was lost!!!
+\ttotal count change:1
+\ttotal count: 1---
+header:
+  stamp:
+    sec: 55
+    nanosec: 948000000
+  frame_id: base_link
+name:
+- panda_finger_joint1
+- panda_finger_joint2
+- panda_joint1
+- panda_joint2
+- panda_joint3
+- panda_joint4
+- panda_joint5
+- panda_joint6
+- panda_joint7
+position:
+- 4.783619422869794e-08
+- -9.096024813507766e-10
+- 4.0003475776561256e-22
+- 0.0065817142426712865
+- -1.7787051379161643e-06
+- -1.5771029104160732
+- -0.0003344845339609694
+- 1.5696488841127192
+- -0.7852999791214366
+velocity: []
+effort:
+- .nan
+- .nan
+---
+""",
+            },
+        }
+    )
+
+    result = client.get_joint_states()
+
+    assert result["success"] is True
+    assert result["joint_states"]["panda_joint4"] == -1.5771029104160732
+    assert result["joint_states"]["panda_joint7"] == -0.7852999791214366
+
+
 def test_named_target_uses_srdf_joint_values_without_moveit_py():
     """named target 应直接从 SRDF 解析关节值，避免触发 MoveItPy 的仿真时间 abort。"""
     client = StubMoveItRuntimeClient(

@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import ast
 import importlib
 import json
 import os
@@ -16,6 +15,8 @@ import subprocess
 import time
 from typing import Any, Optional
 from xml.etree import ElementTree
+
+import yaml
 
 
 DEFAULT_PLANNING_GROUP = "panda_arm"
@@ -116,18 +117,31 @@ class MoveItRuntimeClient:
             return result
 
         output = result.get("output", "")
-        # `ros2 topic echo /joint_states --once` 输出的是 YAML 风格文本。
-        names_match = re.search(r"name:\s*(\[[^\]]*\])", output, flags=re.DOTALL)
-        positions_match = re.search(r"position:\s*(\[[^\]]*\])", output, flags=re.DOTALL)
-        if not names_match or not positions_match:
+        # `ros2 topic echo /joint_states --once` 输出的是 YAML 风格文本，但格式不固定：
+        # - 有些环境会输出 `name: [joint1, joint2]` 这种一行列表。
+        # - Jazzy 的常见输出是 `name:\n- joint1\n- joint2` 这种 block list。
+        # - DDS 偶尔还会在 YAML 文档前插入 `A message was lost!!!` 之类的状态提示。
+        # 所以这里不再用正则硬抠方括号，而是从 `---` 分隔的文档里挑出真正包含
+        # `name` 和 `position` 的 JointState YAML，再让 PyYAML 负责解析列表语法。
+        parsed_message = None
+        for document in str(output).split("---"):
+            if "name:" not in document or "position:" not in document:
+                continue
+            try:
+                candidate = yaml.safe_load(document)
+            except yaml.YAMLError:
+                continue
+            if isinstance(candidate, dict) and isinstance(candidate.get("name"), list) and isinstance(
+                candidate.get("position"), list
+            ):
+                parsed_message = candidate
+                break
+
+        if parsed_message is None:
             return {"success": False, "error": "没有从 /joint_states 输出中解析到 name 和 position。", "raw": output}
 
-        try:
-            names = ast.literal_eval(names_match.group(1))
-            positions = ast.literal_eval(positions_match.group(1))
-        except (SyntaxError, ValueError) as error:
-            return {"success": False, "error": f"解析 /joint_states 失败：{error}", "raw": output}
-
+        names = parsed_message["name"]
+        positions = parsed_message["position"]
         if not isinstance(names, list) or not isinstance(positions, list):
             return {"success": False, "error": "/joint_states name 和 position 必须是列表。", "raw": output}
 
