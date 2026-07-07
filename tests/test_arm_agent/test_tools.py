@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from arm_agent import tools as arm_tools
@@ -9,6 +11,7 @@ class FakeMoveItClient:
     def __init__(self, *, ready: bool = True) -> None:
         self.ready = ready
         self.executed_plans = []
+        self.executed_named_targets = []
         self.gripper_widths = []
 
     def check_readiness(self):
@@ -38,7 +41,7 @@ class FakeMoveItClient:
         return {"success": True, "planning_groups": ["panda_arm"]}
 
     def get_named_targets(self, planning_group):
-        return {"success": True, "planning_group": planning_group, "named_targets": ["home", "ready"]}
+        return {"success": True, "planning_group": planning_group, "named_targets": ["home", "ready", "extended"]}
 
     def get_end_effector_link(self, planning_group):
         return {"success": True, "planning_group": planning_group, "end_effector_link": "panda_hand"}
@@ -71,7 +74,7 @@ class FakeMoveItClient:
         return {
             "success": True,
             "summary": f"{planning_group}:{target_name}",
-            "raw_plan": {"kind": "named"},
+            "raw_plan": {"kind": "named", "target_name": target_name},
         }
 
     def plan_to_joint_goal(self, planning_group, joint_goal):
@@ -90,6 +93,8 @@ class FakeMoveItClient:
 
     def execute_plan(self, plan_result):
         self.executed_plans.append(plan_result["raw_plan"]["kind"])
+        if plan_result["raw_plan"]["kind"] == "named":
+            self.executed_named_targets.append(plan_result["raw_plan"]["target_name"])
         return {
             "success": True,
             "status": "executed",
@@ -143,6 +148,8 @@ def test_tool_descriptions_explain_safety_contracts():
     assert "必须有明确坐标系" in arm_tools.arm_move_to_pose_goal.description
     assert "两指之间的目标总开口宽度" in arm_tools.arm_set_gripper_width.description
     assert "不需要 `plan_id`" in arm_tools.arm_move_to_pose_goal.description
+    assert "有序步骤列表" in arm_tools.arm_execute_plan.description
+    assert "不是任意 LangChain tool dispatcher" in arm_tools.arm_execute_plan.description
     assert "真实硬件急停必须走硬件安全链路" in arm_tools.arm_stop.description
 
 
@@ -152,7 +159,11 @@ def test_state_tools_return_stable_shapes(monkeypatch):
 
     assert arm_tools.arm_get_joint_states.invoke({})["joint_states"] == {"panda_joint1": 0.1}
     assert arm_tools.arm_get_planning_groups.invoke({})["planning_groups"] == ["panda_arm"]
-    assert arm_tools.arm_get_named_targets.invoke({"planning_group": "panda_arm"})["named_targets"] == ["home", "ready"]
+    assert arm_tools.arm_get_named_targets.invoke({"planning_group": "panda_arm"})["named_targets"] == [
+        "home",
+        "ready",
+        "extended",
+    ]
     assert arm_tools.arm_get_end_effector_link.invoke({"planning_group": "panda_arm"})["end_effector_link"] == "panda_hand"
     assert arm_tools.arm_get_end_effector_pose.invoke({"frame_id": "panda_link0"})["frame_id"] == "panda_link0"
     assert arm_tools.arm_get_gripper_state.invoke({})["estimated_width"] == 0.07
@@ -226,3 +237,162 @@ def test_gripper_tools_open_close_and_set_width(monkeypatch):
     assert closed["success"] is True
     assert set_width["success"] is True
     assert client.gripper_widths == [(0.06, 1.0), (0.0, 0.0), (0.03, 0.0)]
+
+
+def test_execute_plan_runs_named_targets_in_order(monkeypatch):
+    client = FakeMoveItClient()
+    monkeypatch.setattr(arm_tools, "_CLIENT_FACTORY", lambda: client)
+
+    result = arm_tools.arm_execute_plan.invoke(
+        {
+            "steps": [
+                {"id": "go_extended", "label": "移动到 extended", "action": "move_named", "target_name": "extended"},
+                {"id": "go_home", "label": "回到 home", "action": "move_named", "target_name": "home"},
+            ]
+        }
+    )
+
+    assert result["success"] is True
+    assert result["executed_steps"] == 2
+    assert result["skipped_steps"] == 0
+    assert client.executed_named_targets == ["extended", "home"]
+    assert [step["id"] for step in result["steps"]] == ["go_extended", "go_home"]
+    assert result["steps"][0]["input"]["target_name"] == "extended"
+    assert result["latest_state"]["joint"]["joint_states"]["panda_joint1"] == 0.2
+
+
+def test_execute_plan_runs_gripper_steps(monkeypatch):
+    client = FakeMoveItClient()
+    monkeypatch.setattr(arm_tools, "_CLIENT_FACTORY", lambda: client)
+
+    result = arm_tools.arm_execute_plan.invoke(
+        {
+            "steps": [
+                {"action": "open_gripper", "width": 0.06, "max_effort": 1.0},
+                {"action": "close_gripper"},
+                {"action": "set_gripper_width", "width": 0.03},
+                {"action": "get_gripper_state"},
+            ]
+        }
+    )
+
+    assert result["success"] is True
+    assert result["executed_steps"] == 4
+    assert client.gripper_widths == [(0.06, 1.0), (0.0, 0.0), (0.03, 0.0)]
+    assert result["latest_state"]["gripper"]["estimated_width"] == 0.07
+
+
+def test_execute_plan_rejects_unknown_and_invalid_arguments_before_movement(monkeypatch):
+    client = FakeMoveItClient()
+    monkeypatch.setattr(arm_tools, "_CLIENT_FACTORY", lambda: client)
+
+    unknown = arm_tools.arm_execute_plan.invoke(
+        {
+            "steps": [
+                {"action": "move_named", "target_name": "extended"},
+                {"action": "ros2_topic_pub", "topic": "/panda_arm_controller/joint_trajectory"},
+            ]
+        }
+    )
+    invalid_width = arm_tools.arm_execute_plan.invoke(
+        {
+            "steps": [
+                {"action": "move_named", "target_name": "extended"},
+                {"action": "set_gripper_width", "width": 2.0},
+            ]
+        }
+    )
+    invalid_frame = arm_tools.arm_execute_plan.invoke(
+        {
+            "steps": [
+                {"action": "move_pose", "x": 0.4, "y": 0.0, "z": 0.4, "frame_id": ""},
+            ]
+        }
+    )
+
+    assert unknown["success"] is False
+    assert unknown["status"] == "unsupported_action"
+    assert invalid_width["success"] is False
+    assert invalid_width["status"] == "invalid_plan"
+    assert invalid_width["requested_width"] == 2.0
+    assert invalid_frame["success"] is False
+    assert "frame_id" in invalid_frame["error"]
+    assert client.executed_plans == []
+    assert client.gripper_widths == []
+
+
+def test_execute_plan_rejects_parallel_and_too_many_steps(monkeypatch):
+    client = FakeMoveItClient()
+    monkeypatch.setattr(arm_tools, "_CLIENT_FACTORY", lambda: client)
+
+    parallel = arm_tools.arm_execute_plan.invoke(
+        {
+            "steps": [
+                {"action": "move_named", "target_name": "home", "parallel": True},
+            ]
+        }
+    )
+    too_many = arm_tools.arm_execute_plan.invoke(
+        {
+            "steps": [
+                {"action": "get_joint_states"}
+                for _index in range(arm_tools.MAX_ARM_PLAN_STEPS + 1)
+            ]
+        }
+    )
+
+    assert parallel["success"] is False
+    assert parallel["status"] == "unsupported_plan"
+    assert "并行动作" in parallel["error"]
+    assert too_many["success"] is False
+    assert too_many["max_steps"] == arm_tools.MAX_ARM_PLAN_STEPS
+    assert client.executed_plans == []
+
+
+def test_execute_plan_stops_after_failure_and_skips_remaining(monkeypatch):
+    class FailingSecondTargetClient(FakeMoveItClient):
+        def plan_to_named_target(self, planning_group, target_name):
+            if target_name == "bad":
+                return {"success": False, "error": "planning failed on bad target"}
+            return super().plan_to_named_target(planning_group, target_name)
+
+    client = FailingSecondTargetClient()
+    monkeypatch.setattr(arm_tools, "_CLIENT_FACTORY", lambda: client)
+
+    result = arm_tools.arm_execute_plan.invoke(
+        {
+            "steps": [
+                {"action": "move_named", "target_name": "extended"},
+                {"action": "move_named", "target_name": "bad"},
+                {"action": "move_named", "target_name": "home"},
+            ]
+        }
+    )
+
+    assert result["success"] is False
+    assert result["executed_steps"] == 2
+    assert result["skipped_steps"] == 1
+    assert client.executed_named_targets == ["extended"]
+    assert result["steps"][1]["success"] is False
+    assert result["steps"][1]["error"] == "planning failed on bad target"
+    assert result["steps"][2]["status"] == "skipped"
+
+
+def test_execute_plan_result_is_json_serializable_for_terminal_streaming(monkeypatch):
+    client = FakeMoveItClient()
+    monkeypatch.setattr(arm_tools, "_CLIENT_FACTORY", lambda: client)
+
+    result = arm_tools.arm_execute_plan.invoke(
+        {
+            "steps": [
+                {"id": "state", "label": "读取关节状态", "action": "get_joint_states"},
+                {"id": "gripper", "label": "读取夹爪状态", "action": "get_gripper_state"},
+            ]
+        }
+    )
+
+    encoded = json.dumps(result, ensure_ascii=False)
+
+    assert result["success"] is True
+    assert "\"steps\"" in encoded
+    assert "读取关节状态" in encoded

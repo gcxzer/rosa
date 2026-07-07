@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Callable, Optional
 
 from langchain_core.tools import tool
@@ -13,11 +14,33 @@ from .moveit_client import (
     DEFAULT_END_EFFECTOR_LINK,
     DEFAULT_GRIPPER_OPENING_WIDTH,
     DEFAULT_PLANNING_GROUP,
+    MAX_GRIPPER_OPENING_WIDTH,
     MoveItRuntimeClient,
 )
 
 
 _CLIENT_FACTORY: Callable[[], Any] = MoveItRuntimeClient
+MAX_ARM_PLAN_STEPS = 12
+_PLAN_ACTIONS = {
+    "move_named",
+    "move_joint",
+    "move_pose",
+    "open_gripper",
+    "close_gripper",
+    "set_gripper_width",
+    "get_joint_states",
+    "get_gripper_state",
+    "stop",
+}
+_UNSUPPORTED_COMPLEX_ACTIONS = {
+    "parallel",
+    "run_parallel",
+    "detect_object",
+    "object_detection",
+    "visual_reasoning",
+    "grasp_success",
+    "verify_grasp",
+}
 
 
 @tool
@@ -394,6 +417,461 @@ def arm_set_gripper_width(
     if readiness_error:
         return readiness_error
     return _client().set_gripper_width(width, max_effort)
+
+
+@tool
+def arm_execute_plan(
+    steps: list[dict[str, Any]],
+    stop_on_failure: bool = True,
+    require_readiness: bool = True,
+) -> dict:
+    """顺序执行一段 ArmAgent 高层动作计划。
+
+    参数：
+    - `steps`: 有序步骤列表。每个步骤必须是字典，并包含 `action` 字段；可以包含可选
+      `id` 和 `label`，方便终端展示。第一阶段支持的 action 只有：
+      `move_named`、`move_joint`、`move_pose`、`open_gripper`、`close_gripper`、
+      `set_gripper_width`、`get_joint_states`、`get_gripper_state`、`stop`。
+    - `stop_on_failure`: 默认 True。任一步失败时，后续步骤会标记为 skipped，不再继续执行。
+    - `require_readiness`: 默认 True。执行任何会移动机器人或夹爪的计划前，先检查
+      MoveIt2、controller、joint states、robot_state_publisher 和 MuJoCo 控制链路是否就绪。
+
+    返回：
+    - `success`: 所有已要求执行的步骤都成功时为 True。
+    - `executed_steps`: 实际执行的步骤数量。
+    - `skipped_steps`: 因失败停止而跳过的步骤数量。
+    - `steps`: 每一步的结构化结果，包含 step id、action、输入参数、状态、成功值和输出/错误。
+    - `latest_state`: 最近一次动作或状态读取得到的 joint / gripper 状态。
+
+    说明：
+    - 这个工具解决“用户一句话里有多个连续动作”时 LLM 不稳定继续调工具的问题。
+      LLM 只负责提交一次结构化计划；后续顺序执行由 Python 控制流完成。
+    - 这个工具不是任意 LangChain tool dispatcher，也不会调用通用 ROS2 topic/service 工具。
+      它只调 ArmAgent 白名单高层动作，避免绕过机械臂安全边界。
+    - 单步动作仍优先使用原来的直接工具；只有用户明确要求连续多个动作时才使用本工具。
+    """
+    if not isinstance(steps, list) or not steps:
+        return {
+            "success": False,
+            "status": "invalid_plan",
+            "error": "steps 必须是非空列表。",
+            "supported_actions": sorted(_PLAN_ACTIONS),
+        }
+    if len(steps) > MAX_ARM_PLAN_STEPS:
+        return {
+            "success": False,
+            "status": "invalid_plan",
+            "error": f"计划最多允许 {MAX_ARM_PLAN_STEPS} 步，当前收到 {len(steps)} 步。",
+            "max_steps": MAX_ARM_PLAN_STEPS,
+        }
+
+    normalized_steps: list[dict[str, Any]] = []
+    for index, raw_step in enumerate(steps, start=1):
+        if not isinstance(raw_step, dict):
+            return {
+                "success": False,
+                "status": "invalid_plan",
+                "error": f"第 {index} 步必须是字典。",
+                "failed_step": index,
+            }
+
+        # 执行器先完整校验所有步骤，再执行第一步。这样如果第 3 步宽度单位写错，
+        # 第 1 步机械臂也不会已经移动到半路。
+        action = str(raw_step.get("action") or "").strip()
+        step_id = str(raw_step.get("id") or index)
+        label = str(raw_step.get("label") or "").strip()
+        if not action:
+            return {
+                "success": False,
+                "status": "invalid_plan",
+                "error": f"第 {index} 步缺少 action。",
+                "failed_step": step_id,
+            }
+        if raw_step.get("parallel") is True or action in _UNSUPPORTED_COMPLEX_ACTIONS:
+            return {
+                "success": False,
+                "status": "unsupported_plan",
+                "error": "第一阶段 plan executor 不支持并行动作、视觉感知、物体检测或抓取成功判定。",
+                "failed_step": step_id,
+                "action": action,
+            }
+        if action not in _PLAN_ACTIONS:
+            return {
+                "success": False,
+                "status": "unsupported_action",
+                "error": f"不支持的 plan action：{action}。",
+                "failed_step": step_id,
+                "action": action,
+                "supported_actions": sorted(_PLAN_ACTIONS),
+            }
+
+        planning_group = str(raw_step.get("planning_group") or DEFAULT_PLANNING_GROUP).strip()
+        if not planning_group:
+            return {
+                "success": False,
+                "status": "invalid_plan",
+                "error": f"第 {index} 步 planning_group 不能为空。",
+                "failed_step": step_id,
+                "action": action,
+            }
+
+        if action == "move_named":
+            target_name = str(raw_step.get("target_name") or raw_step.get("target") or "").strip()
+            if not target_name:
+                return {
+                    "success": False,
+                    "status": "invalid_plan",
+                    "error": f"第 {index} 步 move_named 必须提供 target_name。",
+                    "failed_step": step_id,
+                    "action": action,
+                }
+            normalized_steps.append(
+                {
+                    "id": step_id,
+                    "label": label,
+                    "action": action,
+                    "target_name": target_name,
+                    "planning_group": planning_group,
+                }
+            )
+            continue
+
+        if action == "move_joint":
+            joint_goal = raw_step.get("joint_goal")
+            if not isinstance(joint_goal, dict) or not joint_goal:
+                return {
+                    "success": False,
+                    "status": "invalid_plan",
+                    "error": f"第 {index} 步 move_joint 必须提供非空 joint_goal 字典。",
+                    "failed_step": step_id,
+                    "action": action,
+                }
+            normalized_joint_goal: dict[str, float] = {}
+            for joint_name, value in joint_goal.items():
+                if not isinstance(joint_name, str) or not joint_name.strip():
+                    return {
+                        "success": False,
+                        "status": "invalid_plan",
+                        "error": f"第 {index} 步 joint_goal 里的关节名必须是非空字符串。",
+                        "failed_step": step_id,
+                        "action": action,
+                    }
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                    return {
+                        "success": False,
+                        "status": "invalid_plan",
+                        "error": f"第 {index} 步关节 {joint_name} 的目标值必须是有限数字。",
+                        "failed_step": step_id,
+                        "action": action,
+                    }
+                normalized_joint_goal[joint_name.strip()] = float(value)
+            normalized_steps.append(
+                {
+                    "id": step_id,
+                    "label": label,
+                    "action": action,
+                    "joint_goal": normalized_joint_goal,
+                    "planning_group": planning_group,
+                }
+            )
+            continue
+
+        if action == "move_pose":
+            frame_id_value = raw_step["frame_id"] if "frame_id" in raw_step else DEFAULT_BASE_FRAME
+            link_value = raw_step["end_effector_link"] if "end_effector_link" in raw_step else DEFAULT_END_EFFECTOR_LINK
+            frame_id = str(frame_id_value).strip()
+            end_effector_link = str(link_value).strip()
+            if not frame_id:
+                return {
+                    "success": False,
+                    "status": "invalid_plan",
+                    "error": f"第 {index} 步 move_pose 必须提供有效 frame_id。",
+                    "failed_step": step_id,
+                    "action": action,
+                }
+            if not end_effector_link:
+                return {
+                    "success": False,
+                    "status": "invalid_plan",
+                    "error": f"第 {index} 步 move_pose 必须提供有效 end_effector_link。",
+                    "failed_step": step_id,
+                    "action": action,
+                }
+            pose_numbers: dict[str, float] = {}
+            for key, default in {
+                "x": None,
+                "y": None,
+                "z": None,
+                "qx": 0.0,
+                "qy": 0.0,
+                "qz": 0.0,
+                "qw": 1.0,
+            }.items():
+                value = raw_step.get(key, default)
+                if value is None:
+                    return {
+                        "success": False,
+                        "status": "invalid_plan",
+                        "error": f"第 {index} 步 move_pose 必须提供 {key}。",
+                        "failed_step": step_id,
+                        "action": action,
+                    }
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                    return {
+                        "success": False,
+                        "status": "invalid_plan",
+                        "error": f"第 {index} 步 move_pose 的 {key} 必须是有限数字。",
+                        "failed_step": step_id,
+                        "action": action,
+                    }
+                pose_numbers[key] = float(value)
+            normalized_steps.append(
+                {
+                    "id": step_id,
+                    "label": label,
+                    "action": action,
+                    "frame_id": frame_id,
+                    "end_effector_link": end_effector_link,
+                    "planning_group": planning_group,
+                    **pose_numbers,
+                }
+            )
+            continue
+
+        if action in {"open_gripper", "set_gripper_width"}:
+            width = raw_step.get("width", DEFAULT_GRIPPER_OPENING_WIDTH if action == "open_gripper" else None)
+            if width is None:
+                return {
+                    "success": False,
+                    "status": "invalid_plan",
+                    "error": f"第 {index} 步 {action} 必须提供 width。",
+                    "failed_step": step_id,
+                    "action": action,
+                }
+            if isinstance(width, bool) or not isinstance(width, (int, float)) or not math.isfinite(float(width)):
+                return {
+                    "success": False,
+                    "status": "invalid_plan",
+                    "error": f"第 {index} 步 {action} 的 width 必须是有限数字，单位米。",
+                    "failed_step": step_id,
+                    "action": action,
+                }
+            width = float(width)
+            if width < 0.0 or width > MAX_GRIPPER_OPENING_WIDTH:
+                return {
+                    "success": False,
+                    "status": "invalid_plan",
+                    "error": f"第 {index} 步 {action} 的 width 必须在 0 到 {MAX_GRIPPER_OPENING_WIDTH:.3f} 米之间。",
+                    "failed_step": step_id,
+                    "action": action,
+                    "requested_width": width,
+                }
+            max_effort = raw_step.get("max_effort", 0.0)
+            if isinstance(max_effort, bool) or not isinstance(max_effort, (int, float)) or not math.isfinite(float(max_effort)):
+                return {
+                    "success": False,
+                    "status": "invalid_plan",
+                    "error": f"第 {index} 步 {action} 的 max_effort 必须是有限数字。",
+                    "failed_step": step_id,
+                    "action": action,
+                }
+            normalized_steps.append(
+                {
+                    "id": step_id,
+                    "label": label,
+                    "action": action,
+                    "width": width,
+                    "max_effort": float(max_effort),
+                }
+            )
+            continue
+
+        if action == "close_gripper":
+            max_effort = raw_step.get("max_effort", 0.0)
+            if isinstance(max_effort, bool) or not isinstance(max_effort, (int, float)) or not math.isfinite(float(max_effort)):
+                return {
+                    "success": False,
+                    "status": "invalid_plan",
+                    "error": f"第 {index} 步 close_gripper 的 max_effort 必须是有限数字。",
+                    "failed_step": step_id,
+                    "action": action,
+                }
+            normalized_steps.append(
+                {
+                    "id": step_id,
+                    "label": label,
+                    "action": action,
+                    "max_effort": float(max_effort),
+                }
+            )
+            continue
+
+        normalized_steps.append({"id": step_id, "label": label, "action": action})
+
+    client = _client()
+    if require_readiness:
+        readiness = client.check_readiness()
+        if not readiness.get("success"):
+            return {
+                "success": False,
+                "status": "not_ready",
+                "error": "机械臂运行栈未就绪，已拒绝执行 plan。",
+                "readiness": readiness,
+                "steps": [
+                    {
+                        "id": step["id"],
+                        "label": step["label"],
+                        "action": step["action"],
+                        "input": {
+                            key: value
+                            for key, value in step.items()
+                            if key not in {"id", "label", "action"}
+                        },
+                        "status": "skipped",
+                        "success": False,
+                        "error": "readiness 检查失败，未执行。",
+                    }
+                    for step in normalized_steps
+                ],
+                "executed_steps": 0,
+                "skipped_steps": len(normalized_steps),
+            }
+
+    step_results: list[dict[str, Any]] = []
+    latest_joint_state: Optional[dict[str, Any]] = None
+    latest_gripper_state: Optional[dict[str, Any]] = None
+    failed = False
+    failure_error = ""
+
+    for step in normalized_steps:
+        step_input = {
+            key: value
+            for key, value in step.items()
+            if key not in {"id", "label", "action"}
+        }
+        if failed and stop_on_failure:
+            step_results.append(
+                {
+                    "id": step["id"],
+                    "label": step["label"],
+                    "action": step["action"],
+                    "input": step_input,
+                    "status": "skipped",
+                    "success": False,
+                    "error": "前序步骤失败，stop_on_failure=True，已跳过。",
+                }
+            )
+            continue
+
+        action = step["action"]
+        if action == "move_named":
+            plan_result = client.plan_to_named_target(step["planning_group"], step["target_name"])
+            output = _execute_motion_result(
+                client,
+                plan_result,
+                target_type="named_target",
+                target={"target_name": step["target_name"]},
+                planning_group=step["planning_group"],
+                frame_id=DEFAULT_BASE_FRAME,
+            )
+        elif action == "move_joint":
+            validation = client.validate_joint_goal(step["planning_group"], step["joint_goal"])
+            if validation.get("success"):
+                plan_result = client.plan_to_joint_goal(step["planning_group"], step["joint_goal"])
+                output = _execute_motion_result(
+                    client,
+                    plan_result,
+                    target_type="joint_goal",
+                    target={"joint_goal": dict(step["joint_goal"])},
+                    planning_group=step["planning_group"],
+                    frame_id=DEFAULT_BASE_FRAME,
+                )
+            else:
+                output = validation
+        elif action == "move_pose":
+            pose = {
+                "position": {"x": step["x"], "y": step["y"], "z": step["z"]},
+                "orientation": {"x": step["qx"], "y": step["qy"], "z": step["qz"], "w": step["qw"]},
+            }
+            plan_result = client.plan_to_pose_goal(
+                planning_group=step["planning_group"],
+                frame_id=step["frame_id"],
+                end_effector_link=step["end_effector_link"],
+                pose=pose,
+            )
+            output = _execute_motion_result(
+                client,
+                plan_result,
+                target_type="pose_goal",
+                target={"pose": pose, "end_effector_link": step["end_effector_link"]},
+                planning_group=step["planning_group"],
+                frame_id=step["frame_id"],
+            )
+        elif action == "open_gripper":
+            output = client.set_gripper_width(step["width"], step["max_effort"])
+        elif action == "close_gripper":
+            output = client.set_gripper_width(0.0, step["max_effort"])
+        elif action == "set_gripper_width":
+            output = client.set_gripper_width(step["width"], step["max_effort"])
+        elif action == "get_joint_states":
+            output = client.get_joint_states()
+        elif action == "get_gripper_state":
+            output = client.get_gripper_state()
+        else:
+            output = client.stop_motion()
+
+        success = bool(output.get("success")) if isinstance(output, dict) else False
+        status = str(output.get("status") or ("executed" if success else "failed")) if isinstance(output, dict) else "failed"
+        step_result = {
+            "id": step["id"],
+            "label": step["label"],
+            "action": action,
+            "input": step_input,
+            "status": status,
+            "success": success,
+            "output": output,
+        }
+        if not success:
+            failure_error = str(output.get("error") or "步骤执行失败。") if isinstance(output, dict) else "步骤执行失败。"
+            step_result["error"] = failure_error
+            failed = True
+        step_results.append(step_result)
+
+        if isinstance(output, dict):
+            final_state = output.get("final_state")
+            if action == "get_joint_states" and output.get("success"):
+                latest_joint_state = output
+            elif isinstance(final_state, dict) and "joint_states" in final_state:
+                latest_joint_state = final_state
+
+            if action == "get_gripper_state" and output.get("success"):
+                latest_gripper_state = output
+            elif isinstance(final_state, dict) and (
+                "estimated_width" in final_state or "finger_joint_positions" in final_state
+            ):
+                latest_gripper_state = final_state
+
+    executed_steps = sum(1 for result in step_results if result["status"] != "skipped")
+    skipped_steps = sum(1 for result in step_results if result["status"] == "skipped")
+    all_executed_successfully = not failed and all(result["success"] for result in step_results)
+    return {
+        "success": all_executed_successfully,
+        "status": "executed" if all_executed_successfully else "failed",
+        "summary": (
+            f"已顺序执行 {executed_steps} 个 ArmAgent plan 步骤。"
+            if all_executed_successfully
+            else f"ArmAgent plan 在第 {executed_steps} 个执行步骤后停止：{failure_error}"
+        ),
+        "executed_steps": executed_steps,
+        "skipped_steps": skipped_steps,
+        "total_steps": len(step_results),
+        "stop_on_failure": stop_on_failure,
+        "steps": step_results,
+        "latest_state": {
+            "joint": latest_joint_state,
+            "gripper": latest_gripper_state,
+        },
+    }
 
 
 @tool
