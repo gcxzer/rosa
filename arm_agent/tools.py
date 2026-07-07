@@ -737,143 +737,16 @@ def arm_execute_plan(
                 "skipped_steps": len(normalized_steps),
             }
 
-    if all(step["action"] == "move_named" for step in normalized_steps):
-        planned_results: list[dict[str, Any]] = []
-        for step in normalized_steps:
-            planned = client.plan_to_named_target(step["planning_group"], step["target_name"])
-            raw_plan = planned.get("raw_plan") if isinstance(planned, dict) else None
-            if not (
-                isinstance(planned, dict)
-                and planned.get("success")
-                and isinstance(raw_plan, dict)
-                and raw_plan.get("adapter") == "joint_trajectory_topic"
-                and isinstance(raw_plan.get("joint_goal"), dict)
-            ):
-                planned_results = []
-                break
-            planned_results.append(planned)
-
-        if len(planned_results) == len(normalized_steps):
-            # 连续 named target 不逐步 publish/sleep，而是合成一条多 waypoint JointTrajectory。
-            # 这样 controller 到达 extended 后会继续执行 home，不会等 Python 读完状态再发下一条。
-            first_raw_plan = dict(planned_results[0].get("raw_plan") or {})
-            combined_plan = {
-                "success": True,
-                "status": "planned",
-                "summary": "已合并连续 named targets 为一条多 waypoint 直接关节轨迹。",
-                "raw_plan": {
-                    "adapter": "joint_trajectory_topic",
-                    "joint_goals": [
-                        dict(planned["raw_plan"]["joint_goal"])
-                        for planned in planned_results
-                    ],
-                    "duration": float(first_raw_plan.get("duration", 1.5)),
-                },
-                "metadata": {
-                    "adapter": "joint_trajectory_topic",
-                    "source": "robot_description_semantic",
-                    "moveit_py_bypassed": True,
-                    "combined_waypoints": len(planned_results),
-                },
-            }
-            execution = client.execute_plan(combined_plan)
-            success = bool(execution.get("success")) if isinstance(execution, dict) else False
-            if success:
-                step_results = [
-                    {
-                        "id": step["id"],
-                        "label": step["label"],
-                        "action": step["action"],
-                        "input": {
-                            key: value
-                            for key, value in step.items()
-                            if key not in {"id", "label", "action"}
-                        },
-                        "status": "executed",
-                        "success": True,
-                        "output": {
-                            "success": True,
-                            "status": "executed",
-                            "summary": f"已作为连续 trajectory 的第 {index} 个 waypoint 执行。",
-                            "target_type": "named_target",
-                            "target": {"target_name": step["target_name"]},
-                            "planning_group": step["planning_group"],
-                            "frame_id": DEFAULT_BASE_FRAME,
-                        },
-                    }
-                    for index, step in enumerate(normalized_steps, start=1)
-                ]
-                final_state = execution.get("final_state") if isinstance(execution, dict) else None
-                return {
-                    "success": True,
-                    "status": "executed",
-                    "summary": f"已用一条连续 trajectory 执行 {len(step_results)} 个 named target。",
-                    "executed_steps": len(step_results),
-                    "skipped_steps": 0,
-                    "total_steps": len(step_results),
-                    "stop_on_failure": stop_on_failure,
-                    "steps": step_results,
-                    "combined_execution": execution,
-                    "latest_state": {
-                        "joint": final_state if isinstance(final_state, dict) else None,
-                        "gripper": None,
-                    },
-                }
-
-            first_step = normalized_steps[0]
-            remaining_steps = normalized_steps[1:]
-            error = str(execution.get("error") or "连续 trajectory 执行失败。") if isinstance(execution, dict) else "连续 trajectory 执行失败。"
-            return {
-                "success": False,
-                "status": "failed",
-                "summary": f"连续 named target trajectory 执行失败：{error}",
-                "executed_steps": 1,
-                "skipped_steps": len(remaining_steps),
-                "total_steps": len(normalized_steps),
-                "stop_on_failure": stop_on_failure,
-                "steps": [
-                    {
-                        "id": first_step["id"],
-                        "label": first_step["label"],
-                        "action": first_step["action"],
-                        "input": {
-                            key: value
-                            for key, value in first_step.items()
-                            if key not in {"id", "label", "action"}
-                        },
-                        "status": "failed",
-                        "success": False,
-                        "output": execution,
-                        "error": error,
-                    },
-                    *[
-                        {
-                            "id": step["id"],
-                            "label": step["label"],
-                            "action": step["action"],
-                            "input": {
-                                key: value
-                                for key, value in step.items()
-                                if key not in {"id", "label", "action"}
-                            },
-                            "status": "skipped",
-                            "success": False,
-                            "error": "连续 trajectory 执行失败，已跳过。",
-                        }
-                        for step in remaining_steps
-                    ],
-                ],
-                "combined_execution": execution,
-                "latest_state": {"joint": None, "gripper": None},
-            }
-
     step_results: list[dict[str, Any]] = []
     latest_joint_state: Optional[dict[str, Any]] = None
     latest_gripper_state: Optional[dict[str, Any]] = None
     failed = False
     failure_error = ""
+    combined_named_segments = 0
 
-    for step in normalized_steps:
+    step_index = 0
+    while step_index < len(normalized_steps):
+        step = normalized_steps[step_index]
         step_input = {
             key: value
             for key, value in step.items()
@@ -891,10 +764,136 @@ def arm_execute_plan(
                     "error": "前序步骤失败，stop_on_failure=True，已跳过。",
                 }
             )
+            step_index += 1
             continue
 
         action = step["action"]
         if action == "move_named":
+            move_run = []
+            scan_index = step_index
+            while scan_index < len(normalized_steps) and normalized_steps[scan_index]["action"] == "move_named":
+                move_run.append(normalized_steps[scan_index])
+                scan_index += 1
+
+            if len(move_run) > 1:
+                planned_results: list[dict[str, Any]] = []
+                for move_step in move_run:
+                    planned = client.plan_to_named_target(move_step["planning_group"], move_step["target_name"])
+                    raw_plan = planned.get("raw_plan") if isinstance(planned, dict) else None
+                    if not (
+                        isinstance(planned, dict)
+                        and planned.get("success")
+                        and isinstance(raw_plan, dict)
+                        and raw_plan.get("adapter") == "joint_trajectory_topic"
+                        and isinstance(raw_plan.get("joint_goal"), dict)
+                    ):
+                        # 如果这一段里有 target 不能解析，退回单步执行路径。这样错误会落在
+                        # 具体失败的步骤上，也保留原来的 stop_on_failure 行为。
+                        planned_results = []
+                        break
+                    planned_results.append(planned)
+
+                if len(planned_results) == len(move_run):
+                    # mixed plan 里也可能出现连续 named target，例如：
+                    # ready -> extended -> transport -> open_gripper -> home。
+                    # 这里只合并当前连续段，让前三个 named target 一条 trajectory 连起来；
+                    # 遇到夹爪或其它动作时再回到普通顺序执行。
+                    first_raw_plan = dict(planned_results[0].get("raw_plan") or {})
+                    combined_plan = {
+                        "success": True,
+                        "status": "planned",
+                        "summary": "已合并连续 named targets 为一条多 waypoint 直接关节轨迹。",
+                        "raw_plan": {
+                            "adapter": "joint_trajectory_topic",
+                            "joint_goals": [
+                                dict(planned["raw_plan"]["joint_goal"])
+                                for planned in planned_results
+                            ],
+                            "duration": float(first_raw_plan.get("duration", 1.5)),
+                        },
+                        "metadata": {
+                            "adapter": "joint_trajectory_topic",
+                            "source": "robot_description_semantic",
+                            "moveit_py_bypassed": True,
+                            "combined_waypoints": len(planned_results),
+                        },
+                    }
+                    output = client.execute_plan(combined_plan)
+                    success = bool(output.get("success")) if isinstance(output, dict) else False
+                    if success:
+                        combined_named_segments += 1
+                        final_state = output.get("final_state") if isinstance(output, dict) else None
+                        if isinstance(final_state, dict):
+                            latest_joint_state = final_state
+                        for waypoint_index, move_step in enumerate(move_run, start=1):
+                            step_results.append(
+                                {
+                                    "id": move_step["id"],
+                                    "label": move_step["label"],
+                                    "action": move_step["action"],
+                                    "input": {
+                                        key: value
+                                        for key, value in move_step.items()
+                                        if key not in {"id", "label", "action"}
+                                    },
+                                    "status": "executed",
+                                    "success": True,
+                                    "output": {
+                                        "success": True,
+                                        "status": "executed",
+                                        "summary": f"已作为连续 trajectory 的第 {waypoint_index} 个 waypoint 执行。",
+                                        "target_type": "named_target",
+                                        "target": {"target_name": move_step["target_name"]},
+                                        "planning_group": move_step["planning_group"],
+                                        "frame_id": DEFAULT_BASE_FRAME,
+                                    },
+                                }
+                            )
+                        step_index = scan_index
+                        continue
+
+                    failure_error = (
+                        str(output.get("error") or "连续 trajectory 执行失败。")
+                        if isinstance(output, dict)
+                        else "连续 trajectory 执行失败。"
+                    )
+                    failed = True
+                    first_move_step = move_run[0]
+                    step_results.append(
+                        {
+                            "id": first_move_step["id"],
+                            "label": first_move_step["label"],
+                            "action": first_move_step["action"],
+                            "input": {
+                                key: value
+                                for key, value in first_move_step.items()
+                                if key not in {"id", "label", "action"}
+                            },
+                            "status": "failed",
+                            "success": False,
+                            "output": output,
+                            "error": failure_error,
+                        }
+                    )
+                    for skipped_step in move_run[1:]:
+                        step_results.append(
+                            {
+                                "id": skipped_step["id"],
+                                "label": skipped_step["label"],
+                                "action": skipped_step["action"],
+                                "input": {
+                                    key: value
+                                    for key, value in skipped_step.items()
+                                    if key not in {"id", "label", "action"}
+                                },
+                                "status": "skipped",
+                                "success": False,
+                                "error": "连续 trajectory 执行失败，已跳过。",
+                            }
+                        )
+                    step_index = scan_index
+                    continue
+
             plan_result = client.plan_to_named_target(step["planning_group"], step["target_name"])
             output = _execute_motion_result(
                 client,
@@ -980,6 +979,7 @@ def arm_execute_plan(
                 "estimated_width" in final_state or "finger_joint_positions" in final_state
             ):
                 latest_gripper_state = final_state
+        step_index += 1
 
     executed_steps = sum(1 for result in step_results if result["status"] != "skipped")
     skipped_steps = sum(1 for result in step_results if result["status"] == "skipped")
@@ -988,7 +988,14 @@ def arm_execute_plan(
         "success": all_executed_successfully,
         "status": "executed" if all_executed_successfully else "failed",
         "summary": (
-            f"已顺序执行 {executed_steps} 个 ArmAgent plan 步骤。"
+            (
+                (
+                    f"已顺序执行 {executed_steps} 个 ArmAgent plan 步骤，"
+                    f"其中 {combined_named_segments} 段连续 named target 已合并为 trajectory。"
+                )
+                if combined_named_segments
+                else f"已顺序执行 {executed_steps} 个 ArmAgent plan 步骤。"
+            )
             if all_executed_successfully
             else f"ArmAgent plan 在第 {executed_steps} 个执行步骤后停止：{failure_error}"
         ),

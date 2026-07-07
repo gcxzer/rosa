@@ -307,12 +307,73 @@ def test_execute_plan_combines_direct_named_targets_into_one_trajectory(monkeypa
 
     assert result["success"] is True
     assert result["executed_steps"] == 2
-    assert result["summary"] == "已用一条连续 trajectory 执行 2 个 named target。"
+    assert "1 段连续 named target 已合并为 trajectory" in result["summary"]
     assert len(client.executed_raw_plans) == 1
     assert len(client.executed_raw_plans[0]["joint_goals"]) == 2
     assert client.executed_raw_plans[0]["joint_goals"][0]["panda_joint7"] == 7.0
     assert client.executed_raw_plans[0]["joint_goals"][1]["panda_joint7"] == 17.0
     assert result["latest_state"]["joint"]["joint_states"]["panda_joint1"] == 11.0
+
+
+def test_execute_plan_combines_named_target_segments_inside_mixed_plan(monkeypatch):
+    class MixedPlanClient(FakeMoveItClient):
+        def __init__(self):
+            super().__init__()
+            self.executed_raw_plans = []
+
+        def plan_to_named_target(self, planning_group, target_name):
+            del planning_group
+            offsets = {"ready": 0.0, "extended": 10.0, "transport": 20.0, "home": 30.0}
+            return {
+                "success": True,
+                "status": "planned",
+                "summary": f"direct:{target_name}",
+                "raw_plan": {
+                    "adapter": "joint_trajectory_topic",
+                    "duration": 1.5,
+                    "joint_goal": {
+                        f"panda_joint{index}": float(index) + offsets[target_name]
+                        for index in range(1, 8)
+                    },
+                },
+            }
+
+        def execute_plan(self, plan_result):
+            self.executed_raw_plans.append(plan_result["raw_plan"])
+            return {
+                "success": True,
+                "status": "executed",
+                "planning": {"summary": plan_result["summary"]},
+                "final_state": {"joint_states": {"panda_joint1": 31.0}},
+            }
+
+    client = MixedPlanClient()
+    monkeypatch.setattr(arm_tools, "_CLIENT_FACTORY", lambda: client)
+
+    result = arm_tools.arm_execute_plan.invoke(
+        {
+            "steps": [
+                {"action": "move_named", "target_name": "ready"},
+                {"action": "move_named", "target_name": "extended"},
+                {"action": "move_named", "target_name": "transport"},
+                {"action": "open_gripper", "width": 0.06},
+                {"action": "close_gripper"},
+                {"action": "move_named", "target_name": "home"},
+            ]
+        }
+    )
+
+    assert result["success"] is True
+    assert result["executed_steps"] == 6
+    assert "1 段连续 named target 已合并为 trajectory" in result["summary"]
+    assert len(client.executed_raw_plans) == 2
+    assert len(client.executed_raw_plans[0]["joint_goals"]) == 3
+    assert client.executed_raw_plans[0]["joint_goals"][0]["panda_joint7"] == 7.0
+    assert client.executed_raw_plans[0]["joint_goals"][1]["panda_joint7"] == 17.0
+    assert client.executed_raw_plans[0]["joint_goals"][2]["panda_joint7"] == 27.0
+    assert "joint_goal" in client.executed_raw_plans[1]
+    assert client.executed_raw_plans[1]["joint_goal"]["panda_joint7"] == 37.0
+    assert client.gripper_widths == [(0.06, 0.0), (0.0, 0.0)]
 
 
 def test_execute_plan_runs_gripper_steps(monkeypatch):
