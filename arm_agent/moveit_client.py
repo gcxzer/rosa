@@ -812,35 +812,107 @@ class MoveItRuntimeClient:
         # 同一个 ArmAgent plan 里可能连续移动到多个 named target；如果每一步都重新
         # `ros2 param get`，VM 里的 `/move_group` 参数服务偶尔会在第二次读取时超时。
         # 因此第一次成功读取并剥出 SRDF XML 后缓存到当前 runtime client，后续步骤直接复用。
+        errors: list[str] = []
         result = self._run_ros2(["ros2", "param", "get", "/move_group", "robot_description_semantic"])
-        source = "move_group_parameter"
-        if not result.get("success"):
-            parameter_error = result.get("error")
-            # 有些 VM 里 `/move_group` 参数服务会偶发卡住，但 launch 同时会发布
-            # `/robot_description_semantic` topic。你这次日志里 topic 已经存在，所以参数读取失败时
-            # 继续从 topic 读一次 SRDF，避免整段 plan 在第一步之前就失败。
-            result = self._run_ros2(
-                [
-                    "ros2",
-                    "topic",
-                    "echo",
-                    "/robot_description_semantic",
-                    "--once",
-                    "--spin-time",
-                    str(self.timeout),
-                ],
-                timeout=self.timeout + 3.0,
+        if result.get("success"):
+            value = str(result.get("output") or "")
+            # `ros2 param get` 的输出不是纯 XML，通常会在真正的 SRDF 前面加一段提示文字：
+            #   String value is: <?xml version="1.0" ...>
+            # 不同 ROS2 版本可能写成 `String value is:` 或 `value is:`，所以这里兼容这两种前缀，
+            # 剥掉前缀以后，后续 `ElementTree.fromstring(...)` 才能直接解析 XML。
+            for prefix in ("String value is:", "value is:"):
+                if prefix in value:
+                    value = value.split(prefix, 1)[1].strip()
+                    break
+            if value:
+                try:
+                    ElementTree.fromstring(value)
+                except ElementTree.ParseError as error:
+                    errors.append(f"/move_group 参数 XML 解析失败：{error}")
+                else:
+                    self._robot_description_semantic = value
+                    return {"success": True, "value": value, "cached": False, "source": "move_group_parameter"}
+            else:
+                errors.append("/move_group 参数为空。")
+        else:
+            errors.append(f"/move_group 参数读取失败：{result.get('error')}")
+
+        # 参数服务在你的 VM 里会偶发超时。对于第一阶段 Panda ArmAgent，SRDF 是随仓库和
+        # colcon overlay 一起提供的静态 MoveIt config；直接读文件比 `ros2 topic echo` 长字符串
+        # 更稳，也避免 topic echo 对超长 XML 输出截断导致 `unclosed token`。
+        package_prefix = self._run_ros2(["ros2", "pkg", "prefix", "moveit_resources_panda_moveit_config"])
+        candidate_paths: list[str] = []
+        if package_prefix.get("success"):
+            prefix = str(package_prefix.get("output") or "").strip()
+            if prefix:
+                candidate_paths.append(
+                    os.path.join(
+                        prefix,
+                        "share",
+                        "moveit_resources_panda_moveit_config",
+                        "config",
+                        "panda.srdf",
+                    )
+                )
+        else:
+            errors.append(f"ros2 package share 查询失败：{package_prefix.get('error')}")
+        candidate_paths.append(
+            os.path.abspath(
+                os.path.join(
+                    os.path.dirname(__file__),
+                    "..",
+                    "resources",
+                    "arm_agent",
+                    "moveit_resources",
+                    "panda_moveit_config",
+                    "config",
+                    "panda.srdf",
+                )
             )
-            source = "robot_description_semantic_topic"
-            if not result.get("success"):
-                return {
-                    "success": False,
-                    "error": (
-                        "无法读取 robot_description_semantic："
-                        f"/move_group 参数失败：{parameter_error}；"
-                        f"/robot_description_semantic topic 失败：{result.get('error')}"
-                    ),
-                }
+        )
+
+        for candidate_path in candidate_paths:
+            if not os.path.exists(candidate_path):
+                errors.append(f"SRDF 文件不存在：{candidate_path}")
+                continue
+            try:
+                with open(candidate_path, encoding="utf-8") as file:
+                    value = file.read().strip()
+            except OSError as error:
+                errors.append(f"读取 SRDF 文件失败：{candidate_path}: {error}")
+                continue
+            if not value:
+                errors.append(f"SRDF 文件为空：{candidate_path}")
+                continue
+            try:
+                ElementTree.fromstring(value)
+            except ElementTree.ParseError as error:
+                errors.append(f"SRDF 文件 XML 解析失败：{candidate_path}: {error}")
+                continue
+            self._robot_description_semantic = value
+            return {
+                "success": True,
+                "value": value,
+                "cached": False,
+                "source": "srdf_file",
+                "path": candidate_path,
+            }
+
+        result = self._run_ros2(
+            [
+                "ros2",
+                "topic",
+                "echo",
+                "/robot_description_semantic",
+                "--once",
+                "--spin-time",
+                str(self.timeout),
+            ],
+            timeout=self.timeout + 3.0,
+        )
+        if not result.get("success"):
+            errors.append(f"/robot_description_semantic topic 读取失败：{result.get('error')}")
+            return {"success": False, "error": "无法读取 robot_description_semantic：" + "；".join(errors)}
 
         value = str(result.get("output") or "")
         # `ros2 param get` 的输出不是纯 XML，通常会在真正的 SRDF 前面加一段提示文字：
@@ -851,30 +923,36 @@ class MoveItRuntimeClient:
             if prefix in value:
                 value = value.split(prefix, 1)[1].strip()
                 break
-        if source == "robot_description_semantic_topic":
-            # `ros2 topic echo /robot_description_semantic --once` 常见输出是 YAML：
-            #   data: "<robot ...>...</robot>"
-            # 但 DDS 提示或 `---` 分隔符可能混在前面，所以先尝试从 YAML 文档里取 `data`；
-            # 如果解析失败，再退回到从原始文本里截取 `<robot ...>`。
-            for document in value.split("---"):
-                if "data:" not in document:
-                    continue
-                try:
-                    candidate = yaml.safe_load(document)
-                except yaml.YAMLError:
-                    continue
-                if isinstance(candidate, dict) and isinstance(candidate.get("data"), str):
-                    value = candidate["data"].strip()
-                    break
-            else:
-                robot_start = value.find("<robot")
-                robot_end = value.rfind("</robot>")
-                if robot_start >= 0 and robot_end >= robot_start:
-                    value = value[robot_start : robot_end + len("</robot>")].strip()
+        # `ros2 topic echo /robot_description_semantic --once` 常见输出是 YAML：
+        #   data: "<robot ...>...</robot>"
+        # 但 DDS 提示或 `---` 分隔符可能混在前面，所以先尝试从 YAML 文档里取 `data`；
+        # 如果解析失败，再退回到从原始文本里截取 `<robot ...>`。
+        for document in value.split("---"):
+            if "data:" not in document:
+                continue
+            try:
+                candidate = yaml.safe_load(document)
+            except yaml.YAMLError:
+                continue
+            if isinstance(candidate, dict) and isinstance(candidate.get("data"), str):
+                value = candidate["data"].strip()
+                break
+        else:
+            robot_start = value.find("<robot")
+            robot_end = value.rfind("</robot>")
+            if robot_start >= 0 and robot_end >= robot_start:
+                value = value[robot_start : robot_end + len("</robot>")].strip()
         if not value:
             return {"success": False, "error": "robot_description_semantic 为空。"}
+        try:
+            ElementTree.fromstring(value)
+        except ElementTree.ParseError as error:
+            return {
+                "success": False,
+                "error": "无法读取 robot_description_semantic：" + "；".join([*errors, f"topic XML 解析失败：{error}"]),
+            }
         self._robot_description_semantic = value
-        return {"success": True, "value": value, "cached": False, "source": source}
+        return {"success": True, "value": value, "cached": False, "source": "robot_description_semantic_topic"}
 
     def _load_moveit_py(self) -> dict[str, Any]:
         if self._moveit_py is not None:

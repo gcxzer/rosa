@@ -248,13 +248,67 @@ String value is: <robot name="panda">
     assert semantic_reads == [["ros2", "param", "get", "/move_group", "robot_description_semantic"]]
 
 
-def test_robot_description_semantic_falls_back_to_topic_when_parameter_times_out():
-    """`/move_group` 参数服务超时时，应从 `/robot_description_semantic` topic 读取 SRDF。"""
+def test_robot_description_semantic_falls_back_to_srdf_file_when_parameter_times_out(tmp_path):
+    """参数服务超时时，应优先读取已安装 MoveIt config 里的 panda.srdf 文件。
+
+    VM 里 `ros2 topic echo /robot_description_semantic` 对较长 SRDF XML 可能只吐出不完整文本，
+    继续依赖 topic 会导致 `unclosed token`。这里模拟 `/move_group` 参数超时，但 ROS2 package
+    prefix 可用，确保执行 named target 时直接从静态 SRDF 文件恢复。
+    """
+    package_prefix = tmp_path / "install" / "moveit_resources_panda_moveit_config"
+    srdf_path = package_prefix / "share" / "moveit_resources_panda_moveit_config" / "config" / "panda.srdf"
+    srdf_path.parent.mkdir(parents=True)
+    srdf_path.write_text(
+        """
+<robot name="panda">
+  <group_state group="panda_arm" name="ready">
+    <joint name="panda_joint1" value="0.1"/>
+    <joint name="panda_joint2" value="0.2"/>
+    <joint name="panda_joint3" value="0.3"/>
+    <joint name="panda_joint4" value="0.4"/>
+    <joint name="panda_joint5" value="0.5"/>
+    <joint name="panda_joint6" value="0.6"/>
+    <joint name="panda_joint7" value="0.7"/>
+  </group_state>
+</robot>
+""".strip(),
+        encoding="utf-8",
+    )
     client = StubMoveItRuntimeClient(
         {
             ("ros2", "param", "get", "/move_group", "robot_description_semantic"): {
                 "success": False,
                 "error": "命令超时：ros2 param get /move_group robot_description_semantic",
+            },
+            ("ros2", "pkg", "prefix", "moveit_resources_panda_moveit_config"): {
+                "success": True,
+                "output": str(package_prefix),
+            },
+        }
+    )
+
+    result = client.plan_to_named_target("panda_arm", "ready")
+
+    assert result["success"] is True
+    assert result["raw_plan"]["joint_goal"]["panda_joint7"] == 0.7
+    assert client.commands == [
+        ["ros2", "param", "get", "/move_group", "robot_description_semantic"],
+        ["ros2", "pkg", "prefix", "moveit_resources_panda_moveit_config"],
+    ]
+
+
+def test_robot_description_semantic_falls_back_to_topic_when_parameter_and_files_fail(monkeypatch):
+    """参数和 SRDF 文件都不可用时，才最后尝试从 `/robot_description_semantic` topic 读取。"""
+    monkeypatch.setattr("arm_agent.moveit_client.os.path.exists", lambda path: False)
+    client = StubMoveItRuntimeClient(
+        {
+            ("ros2", "param", "get", "/move_group", "robot_description_semantic"): {
+                "success": False,
+                "error": "命令超时：ros2 param get /move_group robot_description_semantic",
+            },
+            ("ros2", "pkg", "prefix", "moveit_resources_panda_moveit_config"): {
+                "success": False,
+                "error": "package not found",
             },
             (
                 "ros2",
@@ -290,6 +344,7 @@ data: |
     assert result["raw_plan"]["joint_goal"]["panda_joint7"] == 0.7
     assert client.commands == [
         ["ros2", "param", "get", "/move_group", "robot_description_semantic"],
+        ["ros2", "pkg", "prefix", "moveit_resources_panda_moveit_config"],
         [
             "ros2",
             "topic",
