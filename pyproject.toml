@@ -37,6 +37,9 @@ dependencies = [
     "numpy>=1.26.4",
     "mujoco>=3.3,<4",
     "catkin-pkg>=1.0.0",
+    # MoveItPy / moveit_configs_utils 在解析 launch XML、xacro 和前端语法时会间接导入 lark。
+    # Agent 通过 `uv run` 进入项目虚拟环境后，不能假设系统 Python 里已有这个模块。
+    "lark>=1.1,<2",
 ]
 
 [project.urls]
