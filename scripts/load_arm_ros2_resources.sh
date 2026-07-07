@@ -83,6 +83,7 @@ for resource_path in \
   "${PANDA_MOVEIT_CONFIG_SRC}/config/kinematics.yaml" \
   "${PANDA_MOVEIT_CONFIG_SRC}/config/joint_limits.yaml" \
   "${PANDA_MOVEIT_CONFIG_SRC}/config/ompl_planning.yaml" \
+  "${PANDA_MOVEIT_CONFIG_SRC}/config/arm_moveit_py.yaml" \
   "${PANDA_MOVEIT_CONFIG_SRC}/config/gripper_moveit_controllers.yaml" \
   "${PANDA_MOVEIT_CONFIG_SRC}/config/ros2_controllers.yaml" \
   "${PANDA_MOVEIT_CONFIG_SRC}/launch/arm_mujoco.launch.py" \
@@ -190,6 +191,10 @@ elif [ "${PANDA_MOVEIT_CONFIG_SRC}/package.xml" -nt "${INSTALLED_PANDA_MOVEIT_CO
 elif [ "${PANDA_MOVEIT_CONFIG_SRC}/CMakeLists.txt" -nt "${INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE}" ]; then
   NEED_BUILD=1
 elif [ "${PANDA_MOVEIT_CONFIG_SRC}/launch/arm_mujoco.launch.py" -nt "${INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE}" ]; then
+  NEED_BUILD=1
+elif [ "${PANDA_MOVEIT_CONFIG_SRC}/config/arm_moveit_py.yaml" -nt "${INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE}" ]; then
+  # MoveItPy 的配置也是安装到 package share 里的运行资源。它改动后必须重建 workspace，
+  # 否则 VM 里可能还在读旧 install space，继续报 planning pipeline 参数缺失。
   NEED_BUILD=1
 fi
 

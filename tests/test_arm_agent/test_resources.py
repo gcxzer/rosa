@@ -2,6 +2,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import mujoco
+import yaml
 
 
 def test_bundled_mujoco_panda_scene_loads():
@@ -68,6 +69,7 @@ def test_bundled_moveit_panda_resources_are_present_and_parseable():
     assert (panda_moveit_config / "package.xml").exists()
     assert (panda_moveit_config / "config" / "panda.srdf").exists()
     assert (panda_moveit_config / "config" / "ros2_controllers.yaml").exists()
+    assert (panda_moveit_config / "config" / "arm_moveit_py.yaml").exists()
     assert (panda_moveit_config / "launch" / "demo.launch.py").exists()
 
     # URDF 描述 link/joint，SRDF 描述 MoveIt planning group 和 named target。
@@ -76,7 +78,20 @@ def test_bundled_moveit_panda_resources_are_present_and_parseable():
     srdf_root = ElementTree.parse(panda_moveit_config / "config" / "panda.srdf").getroot()
     urdf_joint_names = {joint.attrib.get("name", "") for joint in urdf_root.findall("joint")}
     srdf_groups = {group.attrib.get("name", "") for group in srdf_root.findall("group")}
+    srdf_group_states = {
+        (group_state.attrib.get("group", ""), group_state.attrib.get("name", ""))
+        for group_state in srdf_root.findall("group_state")
+    }
+    moveit_py_config = yaml.safe_load((panda_moveit_config / "config" / "arm_moveit_py.yaml").read_text())
 
     assert {f"panda_joint{index}" for index in range(1, 8)}.issubset(urdf_joint_names)
     assert "panda_arm" in srdf_groups
     assert "hand" in srdf_groups
+    assert {
+        ("panda_arm", "home"),
+        ("panda_arm", "ready"),
+        ("panda_arm", "extended"),
+        ("panda_arm", "transport"),
+    }.issubset(srdf_group_states)
+    assert "ompl" in moveit_py_config["planning_pipelines"]["pipeline_names"]
+    assert moveit_py_config["plan_request_params"]["planning_pipeline"] == "ompl"

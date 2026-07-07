@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import os
 import re
 import subprocess
 from typing import Any, Optional
@@ -496,6 +497,8 @@ class MoveItRuntimeClient:
             planning_module = importlib.import_module("moveit.planning")
             robot_state_module = importlib.import_module("moveit.core.robot_state")
             geometry_msgs = importlib.import_module("geometry_msgs.msg")
+            configs_utils = importlib.import_module("moveit_configs_utils")
+            ament_packages = importlib.import_module("ament_index_python.packages")
         except ImportError as error:
             # 这里是唯一需要报告 MoveIt2 Python adapter 缺失的地方，直接返回完整错误，
             # 不再额外包一层只调用一次的私有 helper。
@@ -503,8 +506,8 @@ class MoveItRuntimeClient:
                 "success": False,
                 "error": (
                     f"加载 MoveIt2 Python adapter 失败：{error}。需要 MoveIt2 Python 运行时适配器。"
-                    "请确认当前 ROS2 shell 已安装并 source `moveit_py`、MoveIt2、ros2_control "
-                    "和 mujoco_ros2_control。"
+                    "请确认当前 ROS2 shell 已安装并 source `moveit_py`、`moveit_configs_utils`、"
+                    "MoveIt2、ros2_control 和 mujoco_ros2_control。"
                 ),
             }
 
@@ -512,7 +515,45 @@ class MoveItRuntimeClient:
             if not rclpy.ok():
                 # 只在运行时初始化 rclpy，保证普通 import/test 不需要 ROS2 环境。
                 rclpy.init()
-            moveit_py = planning_module.MoveItPy(node_name="rosa_arm_agent")
+
+            package_name = "moveit_resources_panda_moveit_config"
+            package_share = ament_packages.get_package_share_directory(package_name)
+            mujoco_model = os.path.join(package_share, "mujoco", "franka_emika_panda", "scene_moveit.xml")
+            moveit_py_config = os.path.join(package_share, "config", "arm_moveit_py.yaml")
+
+            # MoveItPy 会在当前 Python 进程里创建一个新的 rclcpp node。它不会自动继承
+            # 外面 `/move_group` 节点已经加载好的 planning pipeline 参数，所以必须像官方
+            # MoveIt Python API 示例那样，把 URDF、SRDF、kinematics、joint limits、OMPL
+            # pipeline 和 `moveit_cpp` 配置打包成 config_dict 传进去。否则就会出现用户日志里
+            # 的 fatal：`Failed to load planning pipelines from parameter server`。
+            #
+            # 这里使用 colcon 安装后的 package share 路径，而不是仓库相对路径。这样只要用户
+            # 先 `source scripts/load_arm_ros2_resources.sh`，无论从哪个目录启动 main.py，
+            # MoveItPy 都能找到同一份 Panda 描述文件和 MuJoCo MJCF。
+            moveit_config = (
+                configs_utils.MoveItConfigsBuilder(
+                    robot_name="moveit_resources_panda",
+                    package_name=package_name,
+                )
+                .robot_description(
+                    file_path="config/panda.urdf.xacro",
+                    mappings={
+                        "ros2_control_hardware_type": "mujoco",
+                        "mujoco_model": mujoco_model,
+                        "headless": "false",
+                        "sim_speed_factor": "1.0",
+                    },
+                )
+                .robot_description_semantic(file_path="config/panda.srdf")
+                .trajectory_execution(file_path="config/gripper_moveit_controllers.yaml")
+                .planning_pipelines(pipelines=["ompl"])
+                .moveit_cpp(file_path=moveit_py_config)
+                .to_moveit_configs()
+            )
+            moveit_py = planning_module.MoveItPy(
+                node_name="rosa_arm_agent",
+                config_dict=moveit_config.to_dict(),
+            )
         except Exception as error:
             return {"success": False, "error": f"初始化 MoveItPy 失败：{error}"}
 
