@@ -16,10 +16,9 @@ ROSA 是一个面向 ROS2 机器人的自然语言 Agent 框架。它用 Codex +
 
 ArmAgent 在 MuJoCo 中执行连续机械臂动作：
 
-<video src="assets/arm-agent-mujoco-demo.mov" controls></video>
+![ArmAgent MuJoCo demo](assets/arm-agent-mujoco-demo.gif)
 
-如果当前 Markdown 页面不直接播放视频，可以打开
-[assets/arm-agent-mujoco-demo.mov](assets/arm-agent-mujoco-demo.mov)。
+完整录屏可以打开 [assets/arm-agent-mujoco-demo.mov](assets/arm-agent-mujoco-demo.mov)。
 
 ## Requirements
 
