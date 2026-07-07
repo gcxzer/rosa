@@ -196,6 +196,10 @@ elif [ "${PANDA_MOVEIT_CONFIG_SRC}/config/arm_moveit_py.yaml" -nt "${INSTALLED_P
   # MoveItPy 的配置也是安装到 package share 里的运行资源。它改动后必须重建 workspace，
   # 否则 VM 里可能还在读旧 install space，继续报 planning pipeline 参数缺失。
   NEED_BUILD=1
+elif [ "${MUJOCO_PANDA}" -nt "${INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE}" ]; then
+  # MuJoCo MJCF 会被安装进 moveit_resources_panda_moveit_config 的 package share。
+  # 夹爪 actuator、joint 名称或场景资源改动后必须重建，否则 ros2 launch 仍会读旧 MJCF。
+  NEED_BUILD=1
 fi
 
 if [ "${NEED_BUILD}" = "1" ]; then

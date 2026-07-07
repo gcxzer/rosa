@@ -416,6 +416,58 @@ position:
     assert result["action_type"] == "control_msgs/action/ParallelGripperCommand"
 
 
+def test_set_gripper_width_reports_failure_when_final_width_is_not_reached():
+    """action 返回成功但 joint state 没到目标时，工具应该报告失败。"""
+
+    class StalledGripperClient(StubMoveItRuntimeClient):
+        def __init__(self):
+            super().__init__({})
+
+        def _run_ros2(self, args, timeout=None):
+            del timeout
+            self.commands.append(list(args))
+            if args == ["ros2", "action", "list", "-t"]:
+                return {
+                    "success": True,
+                    "lines": [
+                        "/panda_hand_controller/gripper_cmd [control_msgs/action/ParallelGripperCommand]"
+                    ],
+                }
+            if args[:5] == [
+                "ros2",
+                "action",
+                "send_goal",
+                "/panda_hand_controller/gripper_cmd",
+                "control_msgs/action/ParallelGripperCommand",
+            ]:
+                return {
+                    "success": True,
+                    "output": "Result:\nstalled: true\nreached_goal: false\nGoal finished with status: SUCCEEDED",
+                    "lines": ["Goal finished with status: SUCCEEDED"],
+                }
+            if args[:5] == ["ros2", "topic", "echo", "/joint_states", "--once"]:
+                return {
+                    "success": True,
+                    "output": """
+---
+name:
+- panda_finger_joint1
+- panda_finger_joint2
+position:
+- 0.000005
+- 0.000005
+---
+""",
+                }
+            return {"success": False, "error": f"unexpected command: {' '.join(args)}"}
+
+    result = StalledGripperClient().set_gripper_width(0.07)
+
+    assert result["success"] is False
+    assert result["status"] == "goal_not_reached"
+    assert result["actual_width"] == 0.00001
+
+
 def test_set_gripper_width_rejects_out_of_range_width():
     result = StubMoveItRuntimeClient({}).set_gripper_width(0.2)
 

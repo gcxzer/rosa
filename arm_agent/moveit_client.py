@@ -290,6 +290,30 @@ class MoveItRuntimeClient:
                 "action_type": action_type,
             }
 
+        final_state = self.get_gripper_state()
+        width_tolerance = 0.005
+        if final_state.get("success"):
+            actual_width = final_state.get("estimated_width")
+            if isinstance(actual_width, (int, float)) and abs(float(actual_width) - width) > width_tolerance:
+                return {
+                    "success": False,
+                    "status": "goal_not_reached",
+                    "error": (
+                        f"夹爪 action 已返回，但最终开口 {float(actual_width):.6f} m "
+                        f"没有到达目标 {width:.6f} m。"
+                    ),
+                    "target_width": width,
+                    "actual_width": float(actual_width),
+                    "width_tolerance": width_tolerance,
+                    "command_position": command_position,
+                    "max_effort": max_effort,
+                    "controller": "panda_hand_controller",
+                    "action": GRIPPER_ACTION_NAME,
+                    "action_type": action_type,
+                    "raw_action_result": result.get("output", ""),
+                    "final_state": final_state,
+                }
+
         return {
             "success": True,
             "status": "executed",
@@ -301,7 +325,7 @@ class MoveItRuntimeClient:
             "action": GRIPPER_ACTION_NAME,
             "action_type": action_type,
             "raw_action_result": result.get("output", ""),
-            "final_state": self.get_gripper_state(),
+            "final_state": final_state,
         }
 
     def get_planning_groups(self) -> dict[str, Any]:

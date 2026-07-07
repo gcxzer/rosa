@@ -55,6 +55,34 @@ def test_bundled_mujoco_tendon_actuators_match_joint_names():
     assert tendon_actuator_names.issubset(joint_names)
 
 
+def test_bundled_mujoco_gripper_actuator_uses_meter_commands():
+    """确认 MuJoCo 夹爪 actuator 接收 ros2_control 的米制 position command。
+
+    Panda URDF 里单侧 finger joint 上限是 0.04 m，ArmAgent 的 gripper tool 也按米发送
+    `panda_finger_joint1` 目标。如果 MJCF 仍使用 Menagerie 的 0..255 控制量，ros2_control
+    发出的 0.035 m 会被解释成极小控制值，最终夹爪几乎不动。
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    model_path = (
+        repo_root
+        / "resources"
+        / "arm_agent"
+        / "mujoco_menagerie"
+        / "franka_emika_panda"
+        / "panda_moveit.xml"
+    )
+    root = ElementTree.parse(model_path).getroot()
+    actuator = root.find(".//actuator/general[@name='panda_finger_joint1']")
+    home_key = root.find(".//keyframe/key[@name='home']")
+
+    assert actuator is not None
+    assert actuator.attrib["tendon"] == "split"
+    assert actuator.attrib["ctrlrange"] == "0 0.04"
+    assert actuator.attrib["gainprm"] == "100 0 0"
+    assert home_key is not None
+    assert home_key.attrib["ctrl"].split()[-1] == "0.04"
+
+
 def test_bundled_moveit_panda_resources_are_present_and_parseable():
     """确认 GitHub 仓库内置的 Panda MoveIt URDF/SRDF/config 没有缺文件。"""
     repo_root = Path(__file__).resolve().parents[2]
