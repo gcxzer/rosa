@@ -10,4 +10,3 @@ install(
   DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../../mujoco_menagerie/franka_emika_panda"
   DESTINATION share/${PROJECT_NAME}/mujoco
 )
-install(FILES .setup_assistant DESTINATION share/${PROJECT_NAME})
