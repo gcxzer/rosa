@@ -1,149 +1,146 @@
-# ROSA fork
+# ROSA
 
-这个项目基于 [NASA JPL ROSA](https://github.com/nasa-jpl/rosa) 改造，适配langchain 1.0+, 删除了ros1。完整改动记录见 [CHANGES.md](CHANGES.md)。
+本项目最初 fork 自 [NASA JPL ROSA](https://github.com/nasa-jpl/rosa)，当前版本在原项目基础上改造成
+ROS2 + Codex + LangChain v1 的机器人 Agent 框架。
 
-## 能做什么
+ROSA 是一个面向 ROS2 机器人的自然语言 Agent 框架。它用 Codex + LangChain 调用 ROS2 工具，
+支持读取机器人运行状态、调用平台专用工具、保存多轮 session，并把具体机器人能力封装成独立 agent。
 
-- 读取 ROS2 node、topic、service、parameter 和日志信息。
-- 用自然语言和 ROS2 系统多轮对话，并保留本地 session。
-- 通过 Codex + LangChain v1 tool-calling 调用机器人工具。
-- 使用流式输出观察模型回答、工具开始和工具结束事件。
-- 以 turtlesim 作为默认 demo，验证移动、传送、画线、画矩形、画圆等控制链路。
+这个仓库当前包含两个基于 ROSA 框架的实现：
 
-## 环境要求
+- `TurtleAgent`：面向 `turtlesim` 的轻量示例，用来验证 ROS2 工具调用、绘图和多轮对话。
+- `ArmAgent`：面向机械臂的实现，当前默认目标是 Franka Emika Panda，使用 MoveIt2 规划，
+  使用 MuJoCo / `mujoco_ros2_control` 做仿真可视化。
+
+## Requirements
+
+框架基础依赖：
 
 - Python 3.10+
 - `uv`
-- ROS2 Humble、Iron、Jazzy 或更高版本
-- 本机已经登录 Codex，并存在 `~/.codex/auth.json`
+- ROS2 Jazzy 或 Humble
+- 本机已登录 Codex，并存在 `~/.codex/auth.json`
 
-运行前先在当前 shell 里 source ROS2 环境，例如：
+ArmAgent 额外需要：
 
-```bash
-source /opt/ros/humble/setup.zsh
-```
+- MoveIt2
+- `mujoco_ros2_control`
 
-## 快速启动
-
-启动 agent：
+## Install
 
 ```bash
-uv run python main.py --agent turtle
+uv sync
 ```
 
-不传 prompt 时，默认会先发送 `你好，你是谁？`，然后继续进入多轮对话。
-
-也可以启动时直接给第一条消息：
+运行前需要在当前终端加载 ROS2 环境。ArmAgent 可以直接使用仓库提供的加载脚本：
 
 ```bash
-uv run python main.py --agent turtle "当前 ROS2 系统里有哪些 node、topic 和 service？"
+source scripts/load_arm_ros2_resources.sh
 ```
 
-第一条消息发送完成后，程序不会退出，会继续等待下一轮输入。
+默认使用 `ROS_DISTRO=jazzy`。如果使用 Humble：
 
-## 可选 Demo
+```bash
+ROS_DISTRO=humble source scripts/load_arm_ros2_resources.sh
+```
 
-如果要验证运动控制和绘图工具，可以另开一个终端启动 turtlesim：
+## Run TurtleAgent
+
+先启动 turtlesim：
 
 ```bash
 ros2 run turtlesim turtlesim_node
 ```
 
-然后在 agent 里输入：
-
-```text
-检查当前 ROS2 graph，确认 turtlesim 是否正在运行。
-```
-
-```text
-把 turtle1 传送到 (3, 3)，然后画一个边长为 2 的正方形。
-```
-
-turtlesim 只是当前自带的可运行目标；真实机器人接入时，核心改动通常是新增对应机器人平台的工具包和 prompt。
-
-
-## 模型参数
-
-默认模型是 `gpt-5.5`：
+另开一个终端启动 agent：
 
 ```bash
-uv run python main.py --agent turtle --model gpt-5.5
+uv run python main.py --agent turtle
 ```
 
-可以设置 reasoning effort：
+也可以直接传入第一条消息：
 
 ```bash
-uv run python main.py --agent turtle --thinking high "分析当前 ROS2 graph"
+uv run python main.py --agent turtle "把 turtle1 传送到 (3, 3)，然后画一个边长为 2 的正方形。"
 ```
 
-`--thinking none` 表示不显式覆盖模型默认配置。当前可选值：
+## Run ArmAgent
+
+先启动 MuJoCo + MoveIt2 机械臂仿真：
+
+```bash
+source scripts/load_arm_ros2_resources.sh
+ros2 launch moveit_resources_panda_moveit_config arm_mujoco.launch.py
+```
+
+如果只想后台运行仿真，不打开 MuJoCo 窗口和 RViz：
+
+```bash
+ros2 launch moveit_resources_panda_moveit_config arm_mujoco.launch.py headless:=true rviz:=false
+```
+
+另开一个终端运行 ArmAgent：
+
+```bash
+source scripts/load_arm_ros2_resources.sh
+uv run python main.py --agent arm
+```
+
+直接发送第一条消息：
+
+```bash
+uv run python main.py --agent arm "检查机械臂运行栈是否就绪"
+```
+
+## Project Structure
 
 ```text
-none, low, medium, high, xhigh
+src/
+  rosa/        ROSA 核心 runtime
+  codex/       Codex ChatModel 的 LangChain 适配
+  tools/       通用 ROS2、系统、日志和计算工具
+  sessions/    本地多轮 session 存储
+  prompts/     通用机器人系统 prompt
+
+turtle_agent/  基于 ROSA 的 turtlesim 实现
+arm_agent/     基于 ROSA 的机械臂实现
+
+resources/
+  arm_agent/   ArmAgent 需要的 Panda MoveIt 和 MuJoCo 资源
+
+scripts/
+  load_arm_ros2_resources.sh
 ```
 
-## Session
+## Arm Resources
 
-本地对话会保存到 `.rosa/sessions/`：
-
-- `sessions.json` 保存 session 索引。
-- 每个 session 对应一个 JSONL transcript。
-- 每轮对话都会把历史 user/assistant 消息交回 agent，因此下一轮能接上上下文。
-
-启动时终端会打印新 session id，例如：
+ArmAgent 随仓库提供 Panda 机械臂第一阶段需要的资源：
 
 ```text
-新建 session：20260706_120000_abcd1234 - TurtleAgent chat
+resources/arm_agent/
+  mujoco_menagerie/franka_emika_panda/
+    scene_moveit.xml
+    panda_moveit.xml
+    assets/
+  moveit_resources/
+    panda_description/
+    panda_moveit_config/
 ```
 
-下次可以用这个 id 继续同一个对话：
+## Useful Commands
 
-```bash
-uv run python main.py --agent turtle --session-id 20260706_120000_abcd1234
-```
-
-## 接入其他机器人
-
-当前 TurtleAgent 的运行方式可以作为其他 ROS2 机器人 agent 的模板：
-
-- 在 `turtle_agent/tools.py` 这种位置定义平台专用 LangChain tools。
-- 在 `turtle_agent/prompts.py` 这种位置描述机器人能力、约束和安全边界。
-- 继承 `ROSA`，把默认 ROS2 工具和平台专用工具一起注册给 agent。
-- 继续复用 `src/codex/` 的 Codex ChatModel 和 `src/sessions/` 的本地 session 管理。
-
-## 代码位置
-
-- `main.py`：当前本地命令行入口。
-- `turtle_agent/agent.py`：TurtleAgent 类。
-- `turtle_agent/prompts.py`：当前 agent 的系统 prompt。
-- `turtle_agent/tools.py`：当前 agent 的平台专用工具。
-- `src/rosa/rosa.py`：底层 ROSA agent runtime。
-- `src/codex/`：Codex Responses API 到 LangChain `BaseChatModel` 的适配层。
-- `src/sessions/store.py`：本地 session 索引和 JSONL transcript 存储。
-- `src/sessions/runner.py`：执行一轮 session 对话，集中处理流式事件打印和 transcript 写入。
-- `src/tools/`：通用 ROS2、系统、日志和计算工具。
-- `tests/`：单元测试。
-
-## 开发验证
-
-语法检查：
-
-```bash
-uv run python -m compileall main.py src turtle_agent tests
-```
-
-运行测试，并把 warning 当作失败：
+运行测试：
 
 ```bash
 uv run --with pytest pytest -q -W error
 ```
 
-当前验证结果：
+查看入口参数：
 
-```text
-111 passed
+```bash
+uv run python main.py --help
 ```
 
-## 许可证
+## License
 
-本项目继承 ROSA 的许可证。详情见 [LICENSE](LICENSE)。
+见 [LICENSE](LICENSE)。

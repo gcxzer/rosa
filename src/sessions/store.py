@@ -32,28 +32,6 @@ def _date_bucket(now: Optional[datetime] = None) -> str:
     return (now or datetime.now().astimezone()).strftime("%d_%m_%Y")
 
 
-def _new_session_id(now: Optional[datetime] = None) -> str:
-    """生成可读且低碰撞的 session id，格式和 Paper_Notes 类似。"""
-    value = now or datetime.now().astimezone()
-    return f"{value.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-
-
-def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    """原子写 JSON，避免进程中断时留下半截索引文件。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(path.suffix + ".tmp")
-    temp_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    temp_path.replace(path)
-
-
-def _dump_jsonl_message(message: dict[str, Any]) -> str:
-    """把一条 transcript message 序列化成 JSONL 行。"""
-    return json.dumps(message, ensure_ascii=False)
-
-
 @dataclass(slots=True)
 class ROSASessionMetadata:
     """一个 ROSA session 的索引信息。"""
@@ -137,7 +115,9 @@ class ROSASessionStore:
     ) -> ROSASession:
         """创建一个空 session，并写入索引和空 transcript。"""
         now = datetime.now().astimezone()
-        session_id = _new_session_id(now)
+        # session id 只在创建 session 时生成一次：前半段保留可读时间，后半段用短 uuid
+        # 降低同一秒内多次启动 CLI 时的碰撞概率。
+        session_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         created_at = _now_iso(now)
         session_metadata = ROSASessionMetadata(
             session_id=session_id,
@@ -254,16 +234,22 @@ class ROSASessionStore:
         }
 
     def _save_index_locked(self) -> None:
-        _atomic_write_json(
-            self.index_path,
-            {
-                "version": 1,
-                "sessions": {
-                    session_id: metadata.to_dict()
-                    for session_id, metadata in sorted(self._sessions.items())
-                },
+        # 原子写索引：先写临时文件，再 replace 成正式文件。这样就算进程在写入中途退出，
+        # 也不会留下半截 `sessions.json` 让下次启动解析失败。
+        payload = {
+            "version": 1,
+            "sessions": {
+                session_id: metadata.to_dict()
+                for session_id, metadata in sorted(self._sessions.items())
             },
+        }
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.index_path.with_suffix(self.index_path.suffix + ".tmp")
+        temp_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
         )
+        temp_path.replace(self.index_path)
 
     def _transcript_path(self, metadata: ROSASessionMetadata) -> Path:
         return self.sessions_root / metadata.date_bucket / f"{metadata.session_id}.jsonl"
@@ -291,7 +277,8 @@ class ROSASessionStore:
     ) -> None:
         path = self._transcript_path(metadata)
         path.parent.mkdir(parents=True, exist_ok=True)
-        text = "".join(_dump_jsonl_message(message) + "\n" for message in messages)
+        # transcript 使用 JSONL：一行一条消息，后续追加或人工排查都比整块 JSON 更方便。
+        text = "".join(json.dumps(message, ensure_ascii=False) + "\n" for message in messages)
         temp_path = path.with_suffix(path.suffix + ".tmp")
         temp_path.write_text(text, encoding="utf-8")
         temp_path.replace(path)

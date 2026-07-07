@@ -35,6 +35,7 @@ dependencies = [
     "rich",
     "pillow>=10.4.0",
     "numpy>=1.26.4",
+    "mujoco>=3.3,<4",
 ]
 
 [project.urls]
@@ -44,6 +45,8 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["src", "."]
 include = [
+    "arm_agent",
+    "arm_agent.*",
     "codex",
     "codex.*",
     "prompts",

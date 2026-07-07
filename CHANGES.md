@@ -1,6 +1,6 @@
 # ROSA Fork 改动记录
 
-这个文件记录当前 fork 相对原始 NASA JPL ROSA 项目的主要改动，按最近到最早的顺序排列。
+这个文件记录当前 fork 相对原始 NASA JPL ROSA 项目的主要改动。
 
 ## 当前目标
 
@@ -8,16 +8,39 @@
 
 ## 主要改动
 
-### 修复 turtlesim 几何绘图拖尾
+### 新增 ArmAgent 机械臂第一阶段
 
-- `_draw_line_segment_raw()` 不再用 `cmd_vel` 按时间积分距离绘制几何线段。
-- 改为“关笔传送到起点，开笔传送到终点”，让 turtlesim 用 `teleport_absolute` 画精确直线。
-- 新增测试确保 `draw_line_segment` 不再发布 `/cmd_vel`，避免正方形、矩形、折线和圆弧出现拖尾或错位。
-
-### 提交 uv.lock
-
-- 从 `.gitignore` 中移除 `uv.lock`。
-- 提交 `uv.lock`，让本地开发、测试和 `uv run` 使用一致的依赖解析结果。
+- 新增 `scripts/load_arm_ros2_resources.sh`，一键 source ROS2、准备 `.rosa/arm_ros2_ws`、链接 vendored Panda MoveIt packages、运行 rosdep/colcon，并 source 构建后的 workspace。
+- 在 `resources/arm_agent/moveit_resources/` vendored 官方 MoveIt Panda resources：
+  - `panda_description/`：Panda URDF/Xacro 和 visual/collision meshes。
+  - `panda_moveit_config/`：Panda SRDF、MoveIt planning config、controller config、RViz config 和 launch metadata。
+- 新增 `scene_moveit.xml` / `panda_moveit.xml`，把 MuJoCo Menagerie 的 Panda joint 名从 `joint1` 对齐为 MoveIt 使用的 `panda_joint1`，方便后续接 `mujoco_ros2_control`。
+- 新增 `arm_mujoco.launch.py`，使用 `mujoco_ros2_control/MujocoSystemInterface` 把 Panda MJCF 接入 ros2_control，并和 MoveIt2、RViz、controller spawner 一起启动。
+- `panda.urdf.xacro` 新增 `mujoco` 硬件模式；MuJoCo 模式下 arm joint 和 hand joint 进入同一个 `MujocoSystem`，避免夹爪和机械臂被拆到两个仿真后端。
+- 精简 `resources/arm_agent/`，删除资源目录下的额外 README、SOURCE、validate 脚本、viewer 脚本和没有被第一阶段引用的 MuJoCo / MoveIt 示例文件。
+- 新增根目录 `arm_agent/`，作为和 `turtle_agent/` 同级的机械臂应用层 agent。
+- `ArmAgent` 继承当前 `ROSA` runtime，默认使用 `CodexChatModel`，并额外注册机械臂专用工具。
+- 新增 `arm_agent/prompts.py`，强调移动请求直接执行、pose 必须带坐标系、失败时停止后续动作、第一阶段不用 Gazebo。
+- 新增 `arm_agent/tools.py`，提供：
+  - `arm_check_readiness`
+  - `arm_get_joint_states`
+  - `arm_get_planning_groups`
+  - `arm_get_named_targets`
+  - `arm_get_end_effector_link`
+  - `arm_get_end_effector_pose`
+  - `arm_move_to_named_target`
+  - `arm_move_to_joint_goal`
+  - `arm_move_to_pose_goal`
+  - `arm_stop`
+- 新增 `arm_agent/moveit_client.py`，把 MoveIt2、TF、SRDF 和执行逻辑集中到 lazy runtime adapter 边界，普通单元测试不需要安装 ROS2、MoveIt2 或 MuJoCo。
+- 移动工具内部调用 MoveIt2 规划 trajectory 并立即执行，不再暴露 `plan_id` 或单独 execute 工具。
+- `main.py --agent` 新增 `arm`，不改变现有 `turtle` 路径。
+- `clear` / `new` 会按当前 agent 创建新的 session，ArmAgent 使用 `ArmAgent chat` 默认标题。
+- README 改为以 ArmAgent 为主，集中记录 ROS2 Jazzy + Panda MoveIt2 + MuJoCo Menagerie + `mujoco_ros2_control` 技术栈、资源加载、启动方式和测试 prompt。
+- `pyproject.toml` 新增 `mujoco>=3.3,<4`，用于加载和验证仓库内置 MuJoCo scene。
+- 新增 `resources/arm_agent/`，直接随 GitHub 仓库提供第一阶段需要的 MuJoCo Panda scene、mesh assets、MoveIt Panda URDF/SRDF/config 和第三方 license。
+- 新增 `tests/test_arm_agent/`，覆盖导入、工具注册、prompt、安全计划缓存、mocked readiness、planning、execution 和 stop。
+- 当前全量单元测试结果：`122 passed`。
 
 ### 增加本地 Session 管理
 
@@ -95,7 +118,7 @@ uv run python main.py --help
 测试结果：
 
 ```text
-111 passed
+122 passed
 ```
 
 也验证过 `main.py` 可以向模型发送一条简单消息并收到响应。

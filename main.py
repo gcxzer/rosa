@@ -1,12 +1,12 @@
 """ROSA 本地统一入口。
 
-现在仓库里只有 TurtleAgent，因此 `--agent` 当前只支持 turtle。后续如果继续增加别的
-机器人 agent，可以在这个入口里继续扩展 choices 和创建逻辑，而不是再新增多个 main 文件。
+当前入口支持 TurtleAgent 和 ArmAgent。新增机器人 agent 时，继续在这个统一入口里扩展
+`--agent` choices 和创建逻辑，不再新增多个 main 文件。
 
 运行示例：
 
     uv run python main.py --agent turtle "画一个边长为 2 的正方形"
-    uv run python main.py --agent turtle
+    uv run python main.py --agent arm "检查机械臂运行栈是否就绪"
     uv run python main.py --agent turtle --session-id 20260706_120000_abcd1234
 """
 
@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+from arm_agent import ArmAgent
 from sessions import ROSASessionStore, SessionNotFoundError, run_session_prompt
 from turtle_agent import TurtleAgent
 
@@ -23,7 +24,7 @@ async def main() -> None:
     """解析命令行参数，创建指定 agent，并消费 `ROSA.astream()` 的事件流。"""
     parser = argparse.ArgumentParser(description="ROSA 本地统一测试入口")
     parser.add_argument("prompt", nargs="*", help="要发送给 agent 的文本；提供时会先作为多轮对话的第一条消息。")
-    parser.add_argument("--agent", default="turtle", choices=["turtle"], help="要启动的 agent。当前只有 turtle。")
+    parser.add_argument("--agent", default="turtle", choices=["turtle", "arm"], help="要启动的 agent。turtle 用于 turtlesim，arm 用于 MoveIt2 + MuJoCo 机械臂。")
     parser.add_argument("--model", default="gpt-5.5", help="传给 Codex Responses API 的模型名。")
     parser.add_argument("--thinking", default="none", choices=["none", "low", "medium", "high", "xhigh"], help="Codex reasoning effort。none 表示不覆盖默认 thinking。")
     parser.add_argument("--session-id", default="", help="继续已有 session；不传时会创建新 session。")
@@ -31,6 +32,7 @@ async def main() -> None:
 
     # 命令行里不加引号时，prompt 可能被 shell 拆成多个片段；这里统一拼回一句话。
     prompt = " ".join(args.prompt).strip()
+
     # 如果用户只运行 `uv run python main.py --agent turtle`，仍然先发一条最小问候消息。
     if not prompt:
         prompt = "你好，你是谁？"
@@ -40,6 +42,10 @@ async def main() -> None:
 
     if args.agent == "turtle":
         agent = TurtleAgent(model=args.model, thinking=thinking, streaming=True)
+        agent_title = "TurtleAgent chat"
+    else:
+        agent = ArmAgent(model=args.model, thinking=thinking, streaming=True)
+        agent_title = "ArmAgent chat"
 
     if args.session_id:
         try:
@@ -53,7 +59,7 @@ async def main() -> None:
         )
         print(f"继续 session：{session.metadata.session_id} - {session.metadata.title}")
     else:
-        title_source = prompt or "TurtleAgent chat"
+        title_source = prompt or agent_title
         session = session_store.create_session(
             title=title_source[:80],
             agent=args.agent,
@@ -86,7 +92,7 @@ async def main() -> None:
         if current_prompt in {"clear", "new"}:
             # 不覆盖旧 transcript；新建 session 后切到一段空的消息历史。
             session = session_store.create_session(
-                title="TurtleAgent chat",
+                title=agent_title,
                 agent=args.agent,
                 provider="codex",
                 model=args.model,
