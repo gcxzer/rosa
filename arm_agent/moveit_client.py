@@ -7,11 +7,13 @@
 
 from __future__ import annotations
 
+import glob
 import importlib
 import json
 import os
 import re
 import subprocess
+import sys
 import time
 from typing import Any, Optional
 from xml.etree import ElementTree
@@ -758,14 +760,102 @@ class MoveItRuntimeClient:
             elif isinstance(raw_plan, dict) and raw_plan.get("adapter") == "moveit_py_service":
                 try:
                     rclpy = importlib.import_module("rclpy")
-                    srv_module = importlib.import_module("moveit_resources_panda_moveit_config.srv")
-                    move_pose_service = getattr(srv_module, "MovePose")
                 except ImportError as error:
                     return {
                         "success": False,
                         "error": (
-                            f"加载 MoveItPy service client 失败：{error}。请先 source "
-                            "`scripts/load_arm_ros2_resources.sh`，并确认 ROS2 workspace 已重新构建。"
+                            f"加载 rclpy 失败：{error}。请确认当前 shell 已 source ROS2，"
+                            "并且 `uv run` 使用的环境可以访问 ROS2 Python 包。"
+                        ),
+                        "planning": plan_result,
+                    }
+
+                try:
+                    srv_module = importlib.import_module("moveit_resources_panda_moveit_config.srv")
+                except ImportError as error:
+                    service_import_error = error
+                    generated_python_paths: list[str] = []
+
+                    # `MovePose.srv` 是 colcon build 时生成的 Python 包，不是仓库源码里手写的包。
+                    # 正常情况下 `source .rosa/arm_ros2_ws/install/setup.*` 会把它加入 PYTHONPATH。
+                    # 但用户实际运行时通常是 `uv run python main.py`：uv 的虚拟环境有时不会继承
+                    # overlay 里生成的 dist-packages 路径，导致 ROS2 graph 在线、service server 在线，
+                    # 但聊天进程 import `moveit_resources_panda_moveit_config.srv` 失败。
+                    #
+                    # 这里不要求用户手动猜 PYTHONPATH，而是用 ROS2 自己的 package index 找到
+                    # moveit_resources_panda_moveit_config 的 install prefix，再把常见的 generated
+                    # Python 安装目录补进 sys.path。这样只要 workspace 已经构建过，client 就能
+                    # 稳定加载自定义 service 类型。
+                    package_prefix = self._run_ros2(
+                        ["ros2", "pkg", "prefix", "moveit_resources_panda_moveit_config"],
+                        timeout=self.timeout + 2.0,
+                    )
+                    candidate_prefixes: list[str] = []
+                    if package_prefix.get("success"):
+                        prefix = str(package_prefix.get("output") or "").strip()
+                        if prefix:
+                            candidate_prefixes.append(prefix)
+
+                    repo_local_prefix = os.path.abspath(
+                        os.path.join(
+                            os.path.dirname(__file__),
+                            "..",
+                            ".rosa",
+                            "arm_ros2_ws",
+                            "install",
+                            "moveit_resources_panda_moveit_config",
+                        )
+                    )
+                    if repo_local_prefix not in candidate_prefixes:
+                        candidate_prefixes.append(repo_local_prefix)
+
+                    for prefix in candidate_prefixes:
+                        for pattern in (
+                            "local/lib/python*/dist-packages",
+                            "local/lib/python*/site-packages",
+                            "lib/python*/dist-packages",
+                            "lib/python*/site-packages",
+                        ):
+                            generated_python_paths.extend(glob.glob(os.path.join(prefix, pattern)))
+
+                    added_python_paths: list[str] = []
+                    for python_path in generated_python_paths:
+                        if os.path.isdir(python_path) and python_path not in sys.path:
+                            sys.path.insert(0, python_path)
+                            added_python_paths.append(python_path)
+
+                    try:
+                        srv_module = importlib.import_module("moveit_resources_panda_moveit_config.srv")
+                    except ImportError:
+                        package_prefix_error = (
+                            ""
+                            if package_prefix.get("success")
+                            else f"；ros2 pkg prefix 失败：{package_prefix.get('error')}"
+                        )
+                        searched = ", ".join(candidate_prefixes) if candidate_prefixes else "无"
+                        added = ", ".join(added_python_paths) if added_python_paths else "无"
+                        return {
+                            "success": False,
+                            "error": (
+                                f"加载 MoveItPy service client 失败：{service_import_error}。"
+                                "已尝试从 ROS2 package prefix 自动补 generated service 的 Python 路径，"
+                                f"但仍无法导入。请先运行 `uv sync`，然后重新执行 "
+                                "`ARM_AGENT_FORCE_BUILD=1 source scripts/load_arm_ros2_resources.sh`。"
+                                f" 已搜索 prefix：{searched}；已加入 sys.path：{added}{package_prefix_error}"
+                            ),
+                            "planning": plan_result,
+                        }
+
+                try:
+                    move_pose_service = getattr(srv_module, "MovePose")
+                except AttributeError:
+                    return {
+                        "success": False,
+                        "error": (
+                            "加载 MoveItPy service client 失败："
+                            "`moveit_resources_panda_moveit_config.srv` 中没有 MovePose。"
+                            "请重新执行 `ARM_AGENT_FORCE_BUILD=1 source scripts/load_arm_ros2_resources.sh`，"
+                            "让 colcon 重新生成 MovePose.srv 的 Python interface。"
                         ),
                         "planning": plan_result,
                     }

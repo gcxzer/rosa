@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 import types
 
 from arm_agent.moveit_client import MoveItRuntimeClient
@@ -678,6 +679,103 @@ def test_execute_pose_goal_calls_moveit_service(monkeypatch):
     assert request.planning_group == "panda_arm"
     assert request.pose.position.y == 0.1
     assert request.pose.orientation.z == 0.707
+
+
+def test_execute_pose_goal_recovers_generated_service_python_path(monkeypatch, tmp_path):
+    """uv venv 没吃到 colcon overlay 时，应从 ROS2 package prefix 自动补 service Python 路径。"""
+
+    python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    package_prefix = tmp_path / "install" / "moveit_resources_panda_moveit_config"
+    generated_python_path = package_prefix / "local" / "lib" / python_version / "dist-packages"
+    generated_python_path.mkdir(parents=True)
+
+    class PoseServiceClient(MoveItRuntimeClient):
+        def __init__(self):
+            super().__init__(timeout=0.1)
+            self.commands = []
+
+        def _run_ros2(self, args, timeout=None):
+            del timeout
+            self.commands.append(list(args))
+            if args == ["ros2", "pkg", "prefix", "moveit_resources_panda_moveit_config"]:
+                return {"success": True, "output": str(package_prefix), "lines": [str(package_prefix)]}
+            return {"success": False, "error": f"unexpected command: {' '.join(args)}"}
+
+        def get_joint_states(self):
+            return {"success": True, "joint_states": {"panda_joint1": 0.1}}
+
+    class FakeMovePose:
+        class Request:
+            def __init__(self):
+                self.planning_group = ""
+                self.frame_id = ""
+                self.end_effector_link = ""
+                self.pose = types.SimpleNamespace(
+                    position=types.SimpleNamespace(x=0.0, y=0.0, z=0.0),
+                    orientation=types.SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
+                )
+
+    class FakeFuture:
+        def done(self):
+            return True
+
+        def result(self):
+            return types.SimpleNamespace(success=True, status="executed", summary="service executed", error="")
+
+    class FakeServiceClient:
+        def wait_for_service(self, timeout_sec):
+            del timeout_sec
+            return True
+
+        def call_async(self, request):
+            del request
+            return FakeFuture()
+
+    class FakeNode:
+        def create_client(self, service_type, service_name):
+            assert service_type is FakeMovePose
+            assert service_name == "/rosa_arm_moveit_server/move_pose"
+            return FakeServiceClient()
+
+        def destroy_node(self):
+            pass
+
+    fake_rclpy = types.SimpleNamespace(
+        ok=lambda: False,
+        init=lambda: None,
+        create_node=lambda name: FakeNode(),
+        spin_until_future_complete=lambda node, future, timeout_sec: None,
+    )
+    monkeypatch.setattr(sys, "path", [path for path in sys.path if path != str(generated_python_path)])
+    original_import = __import__("importlib").import_module
+
+    def fake_import_module(name):
+        if name == "rclpy":
+            return fake_rclpy
+        if name == "moveit_resources_panda_moveit_config.srv":
+            if str(generated_python_path) in sys.path:
+                return types.SimpleNamespace(MovePose=FakeMovePose)
+            raise ImportError("No module named 'moveit_resources_panda_moveit_config'")
+        return original_import(name)
+
+    monkeypatch.setattr("arm_agent.moveit_client.importlib.import_module", fake_import_module)
+    client = PoseServiceClient()
+    plan_result = client.plan_to_pose_goal(
+        planning_group="panda_arm",
+        frame_id="panda_link0",
+        end_effector_link="panda_hand",
+        pose={
+            "position": {"x": 0.4, "y": 0.1, "z": 0.35},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.707, "w": 0.707},
+        },
+    )
+
+    executed = client.execute_plan(plan_result)
+
+    assert executed["success"] is True
+    assert executed["execution"]["adapter"] == "moveit_py_service"
+    assert str(generated_python_path) in sys.path
+    assert client.commands == [["ros2", "pkg", "prefix", "moveit_resources_panda_moveit_config"]]
 
 
 def test_set_gripper_width_sends_gripper_action_and_reports_state():
