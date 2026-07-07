@@ -9,4 +9,6 @@ def test_arm_prompt_covers_direct_move_frames_failure_handling_and_no_gazebo():
     assert "坐标系" in prompt_text
     assert "失败" in prompt_text
     assert "关节限制" in prompt_text
+    assert "arm_open_gripper" in prompt_text
+    assert "夹爪" in prompt_text
     assert "不使用 Gazebo" in prompt_text

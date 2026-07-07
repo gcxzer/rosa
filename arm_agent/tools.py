@@ -11,6 +11,7 @@ from langchain_core.tools import tool
 from .moveit_client import (
     DEFAULT_BASE_FRAME,
     DEFAULT_END_EFFECTOR_LINK,
+    DEFAULT_GRIPPER_OPENING_WIDTH,
     DEFAULT_PLANNING_GROUP,
     MoveItRuntimeClient,
 )
@@ -150,6 +151,25 @@ def arm_get_end_effector_pose(
     - 如果 TF 查询失败，应检查 `robot_state_publisher`、`/tf` 和 `/joint_states`。
     """
     return _client().get_end_effector_pose(frame_id, end_effector_link)
+
+
+@tool
+def arm_get_gripper_state() -> dict:
+    """读取 Panda 夹爪/夹头当前状态。
+
+    典型使用场景：
+    - 用户询问夹爪当前是打开还是闭合。
+    - 打开/闭合夹爪后，需要确认 `panda_finger_joint1` 和 `panda_finger_joint2` 的位置。
+
+    返回：
+    - `success`: 是否成功读取。
+    - `finger_joint_positions`: 两个 finger joint 的当前位置。
+    - `estimated_width`: 根据两个 finger joint 估算的两指总开口宽度，单位米。
+
+    注意：
+    - 这个工具只读取状态，不会移动夹爪。
+    """
+    return _client().get_gripper_state()
 
 
 @tool
@@ -293,6 +313,85 @@ def arm_move_to_pose_goal(
         planning_group=planning_group,
         frame_id=frame_id,
     )
+
+
+@tool
+def arm_open_gripper(
+    width: float = DEFAULT_GRIPPER_OPENING_WIDTH,
+    max_effort: float = 0.0,
+    require_readiness: bool = True,
+) -> dict:
+    """打开 Panda 夹爪/夹头。
+
+    参数：
+    - `width`: 两指之间的目标总开口宽度，单位米。默认 0.07 m，接近当前 SRDF `hand/open`。
+    - `max_effort`: GripperCommand 最大努力值。默认 0.0，表示不额外限制 controller。
+    - `require_readiness`: 默认 True。为 True 时会先检查 ROS2/MoveIt2/MuJoCo 控制链路是否就绪。
+
+    返回：
+    - 成功时返回 `success=True`、执行摘要、目标开口宽度、controller action 输出和最终夹爪状态。
+    - 失败时返回 `success=False` 和错误原因。
+
+    说明：
+    - 工具内部通过 `/panda_hand_controller/gripper_cmd` 发送 `control_msgs/action/GripperCommand`。
+    - 用户说“打开夹爪”“松开”“张开夹头”时，应优先调用这个工具。
+    """
+    readiness_error = _readiness_error(require_readiness)
+    if readiness_error:
+        return readiness_error
+    return _client().set_gripper_width(width, max_effort)
+
+
+@tool
+def arm_close_gripper(
+    max_effort: float = 0.0,
+    require_readiness: bool = True,
+) -> dict:
+    """闭合 Panda 夹爪/夹头。
+
+    参数：
+    - `max_effort`: GripperCommand 最大努力值。默认 0.0，表示不额外限制 controller。
+    - `require_readiness`: 默认 True。为 True 时会先检查 ROS2/MoveIt2/MuJoCo 控制链路是否就绪。
+
+    返回：
+    - 成功时返回 `success=True`、执行摘要、目标开口宽度 0.0 和最终夹爪状态。
+    - 失败时返回 `success=False` 和错误原因。
+
+    说明：
+    - 用户说“闭合夹爪”“夹住”“合上夹头”时，应优先调用这个工具。
+    - 这个工具只控制夹爪宽度，不做物体检测、抓取成功判定或力控闭环。
+    """
+    readiness_error = _readiness_error(require_readiness)
+    if readiness_error:
+        return readiness_error
+    return _client().set_gripper_width(0.0, max_effort)
+
+
+@tool
+def arm_set_gripper_width(
+    width: float,
+    max_effort: float = 0.0,
+    require_readiness: bool = True,
+) -> dict:
+    """设置 Panda 夹爪/夹头开口宽度。
+
+    参数：
+    - `width`: 两指之间的目标总开口宽度，单位米。Panda 第一阶段允许范围是 0 到 0.08 m。
+    - `max_effort`: GripperCommand 最大努力值。默认 0.0，表示不额外限制 controller。
+    - `require_readiness`: 默认 True。为 True 时会先检查 ROS2/MoveIt2/MuJoCo 控制链路是否就绪。
+
+    返回：
+    - 成功时返回 `success=True`、目标宽度、controller 命令位置和最终夹爪状态。
+    - 失败时返回 `success=False` 和错误原因。
+
+    说明：
+    - 用户给出具体开口，例如“夹爪打开到 3 cm / 0.03 m”时，调用这个工具。
+    - 这个工具不做抓取语义判断；只是把宽度命令发给 `panda_hand_controller`。
+    """
+    readiness_error = _readiness_error(require_readiness)
+    if readiness_error:
+        return readiness_error
+    return _client().set_gripper_width(width, max_effort)
 
 
 @tool

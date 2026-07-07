@@ -9,6 +9,7 @@ class FakeMoveItClient:
     def __init__(self, *, ready: bool = True) -> None:
         self.ready = ready
         self.executed_plans = []
+        self.gripper_widths = []
 
     def check_readiness(self):
         if self.ready:
@@ -50,6 +51,16 @@ class FakeMoveItClient:
             "pose": {"position": {"x": 0.4, "y": 0.0, "z": 0.4}},
         }
 
+    def get_gripper_state(self):
+        return {
+            "success": True,
+            "estimated_width": 0.07,
+            "finger_joint_positions": {
+                "panda_finger_joint1": 0.035,
+                "panda_finger_joint2": 0.035,
+            },
+        }
+
     def validate_joint_goal(self, planning_group, joint_goal):
         del planning_group
         if any(not isinstance(value, (int, float)) for value in joint_goal.values()):
@@ -86,6 +97,16 @@ class FakeMoveItClient:
             "final_state": {"joint_states": {"panda_joint1": 0.2}},
         }
 
+    def set_gripper_width(self, width, max_effort=0.0):
+        self.gripper_widths.append((width, max_effort))
+        return {
+            "success": True,
+            "status": "executed",
+            "target_width": width,
+            "max_effort": max_effort,
+            "final_state": self.get_gripper_state(),
+        }
+
     def stop_motion(self):
         return {"success": True, "summary": "stopped"}
 
@@ -120,6 +141,7 @@ def test_tool_descriptions_explain_safety_contracts():
     assert "一步执行" in arm_tools.arm_move_to_named_target.description
     assert "关节名" in arm_tools.arm_move_to_joint_goal.description
     assert "必须有明确坐标系" in arm_tools.arm_move_to_pose_goal.description
+    assert "两指之间的目标总开口宽度" in arm_tools.arm_set_gripper_width.description
     assert "不需要 `plan_id`" in arm_tools.arm_move_to_pose_goal.description
     assert "真实硬件急停必须走硬件安全链路" in arm_tools.arm_stop.description
 
@@ -133,6 +155,7 @@ def test_state_tools_return_stable_shapes(monkeypatch):
     assert arm_tools.arm_get_named_targets.invoke({"planning_group": "panda_arm"})["named_targets"] == ["home", "ready"]
     assert arm_tools.arm_get_end_effector_link.invoke({"planning_group": "panda_arm"})["end_effector_link"] == "panda_hand"
     assert arm_tools.arm_get_end_effector_pose.invoke({"frame_id": "panda_link0"})["frame_id"] == "panda_link0"
+    assert arm_tools.arm_get_gripper_state.invoke({})["estimated_width"] == 0.07
 
 
 def test_named_joint_and_pose_moves_execute_immediately(monkeypatch):
@@ -189,3 +212,17 @@ def test_successful_execution_returns_final_state_and_stop_reports_success(monke
     assert executed["status"] == "executed"
     assert executed["final_state"]["joint_states"]["panda_joint1"] == 0.2
     assert stopped["success"] is True
+
+
+def test_gripper_tools_open_close_and_set_width(monkeypatch):
+    client = FakeMoveItClient()
+    monkeypatch.setattr(arm_tools, "_CLIENT_FACTORY", lambda: client)
+
+    opened = arm_tools.arm_open_gripper.invoke({"width": 0.06, "max_effort": 1.0})
+    closed = arm_tools.arm_close_gripper.invoke({})
+    set_width = arm_tools.arm_set_gripper_width.invoke({"width": 0.03})
+
+    assert opened["success"] is True
+    assert closed["success"] is True
+    assert set_width["success"] is True
+    assert client.gripper_widths == [(0.06, 1.0), (0.0, 0.0), (0.03, 0.0)]

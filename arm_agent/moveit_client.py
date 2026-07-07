@@ -22,6 +22,9 @@ import yaml
 DEFAULT_PLANNING_GROUP = "panda_arm"
 DEFAULT_BASE_FRAME = "panda_link0"
 DEFAULT_END_EFFECTOR_LINK = "panda_hand"
+DEFAULT_GRIPPER_OPENING_WIDTH = 0.07
+MAX_GRIPPER_OPENING_WIDTH = 0.08
+GRIPPER_ACTION_NAME = "/panda_hand_controller/gripper_cmd"
 
 
 class MoveItRuntimeClient:
@@ -151,6 +154,92 @@ class MoveItRuntimeClient:
             if isinstance(position, (int, float))
         }
         return {"success": True, "joint_states": pairs, "names": list(pairs.keys()), "positions": list(pairs.values())}
+
+    def get_gripper_state(self) -> dict[str, Any]:
+        joint_states = self.get_joint_states()
+        if not joint_states.get("success"):
+            return joint_states
+
+        states = dict(joint_states.get("joint_states") or {})
+        finger1 = states.get("panda_finger_joint1")
+        finger2 = states.get("panda_finger_joint2")
+        if not isinstance(finger1, (int, float)):
+            return {
+                "success": False,
+                "error": "当前 /joint_states 里没有 panda_finger_joint1，不能读取夹爪状态。",
+                "joint_states": joint_states,
+            }
+
+        # Panda hand 的 controller 只命令 panda_finger_joint1；panda_finger_joint2 是跟随/被动关节。
+        # 用户更关心的是两指之间的总开口宽度，所以这里同时返回 controller 命令关节值和估算总宽度。
+        # 如果第二个 finger 状态暂时不可见，就按对称夹爪估算为 2 * finger1。
+        finger1_position = float(finger1)
+        finger2_position = float(finger2) if isinstance(finger2, (int, float)) else finger1_position
+        estimated_width = max(0.0, finger1_position) + max(0.0, finger2_position)
+        return {
+            "success": True,
+            "controller": "panda_hand_controller",
+            "action": GRIPPER_ACTION_NAME,
+            "finger_joint_positions": {
+                "panda_finger_joint1": finger1_position,
+                "panda_finger_joint2": finger2_position,
+            },
+            "estimated_width": estimated_width,
+            "joint_states": joint_states,
+        }
+
+    def set_gripper_width(self, width: float, max_effort: float = 0.0) -> dict[str, Any]:
+        if not isinstance(width, (int, float)):
+            return {"success": False, "error": "夹爪 width 必须是数字，单位是米。"}
+        if not isinstance(max_effort, (int, float)):
+            return {"success": False, "error": "夹爪 max_effort 必须是数字。"}
+
+        width = float(width)
+        max_effort = float(max_effort)
+        if width < 0.0 or width > MAX_GRIPPER_OPENING_WIDTH:
+            return {
+                "success": False,
+                "error": f"夹爪 width 必须在 0 到 {MAX_GRIPPER_OPENING_WIDTH:.3f} 米之间。",
+                "requested_width": width,
+            }
+
+        # ROS2 的 GripperCommand action 对这个 Panda controller 命令的是单个 finger joint position。
+        # 面向用户的 width 用“两指之间总开口宽度”表达，因此发送给 controller 前要除以 2。
+        # `max_effort=0.0` 是 ROS gripper controller 的常见默认语义：不额外限制最大努力值。
+        command_position = width / 2.0
+        payload = {"command": {"position": command_position, "max_effort": max_effort}}
+        result = self._run_ros2(
+            [
+                "ros2",
+                "action",
+                "send_goal",
+                GRIPPER_ACTION_NAME,
+                "control_msgs/action/GripperCommand",
+                json.dumps(payload),
+            ],
+            timeout=self.timeout + 8.0,
+        )
+        if not result.get("success"):
+            return {
+                "success": False,
+                "error": f"发送夹爪 action 失败：{result.get('error')}",
+                "target_width": width,
+                "command_position": command_position,
+                "action": GRIPPER_ACTION_NAME,
+            }
+
+        return {
+            "success": True,
+            "status": "executed",
+            "summary": f"已将夹爪开口设置为 {width:.3f} m。",
+            "target_width": width,
+            "command_position": command_position,
+            "max_effort": max_effort,
+            "controller": "panda_hand_controller",
+            "action": GRIPPER_ACTION_NAME,
+            "raw_action_result": result.get("output", ""),
+            "final_state": self.get_gripper_state(),
+        }
 
     def get_planning_groups(self) -> dict[str, Any]:
         semantic = self._read_robot_description_semantic()

@@ -20,6 +20,7 @@ class ArmAgent(ROSA):
         "检查当前 ROS2 graph，确认 MoveIt2、controller manager、joint states 和 MuJoCo 控制链路是否在线。",
         "读取当前 joint states 和末端位姿。",
         "移动到 named target home，并返回最终 joint state。",
+        "打开夹爪到 7 厘米，然后读取夹爪状态。",
         "把末端移动到 panda_link0 坐标系下 x=0.4, y=0.0, z=0.4，姿态保持单位四元数。",
         "立刻停止机械臂运动，并报告控制器状态。",
     ]

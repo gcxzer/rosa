@@ -60,6 +60,9 @@ def test_arm_agent_imports_and_binds_arm_tools_without_ros_runtime():
     assert "arm_get_end_effector_link" in model.bound_tool_names
     assert "arm_move_to_pose_goal" in model.bound_tool_names
     assert "arm_move_to_named_target" in model.bound_tool_names
+    assert "arm_open_gripper" in model.bound_tool_names
+    assert "arm_close_gripper" in model.bound_tool_names
+    assert "arm_set_gripper_width" in model.bound_tool_names
     assert "arm_execute_plan" not in model.bound_tool_names
     assert "ros2_node_list" in model.bound_tool_names
 
@@ -69,4 +72,5 @@ def test_arm_agent_imports_and_binds_arm_tools_without_ros_runtime():
     assert "ArmAgent" in system_text
     assert "MoveIt2" in system_text
     assert "MuJoCo" in system_text
+    assert "夹爪" in system_text
     assert "Gazebo" in system_text

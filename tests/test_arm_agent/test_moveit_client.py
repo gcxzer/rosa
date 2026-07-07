@@ -264,3 +264,55 @@ def test_partial_joint_goal_is_completed_from_current_joint_states():
     assert result["success"] is True
     assert result["raw_plan"]["joint_goal"]["panda_joint1"] == 9.0
     assert result["raw_plan"]["joint_goal"]["panda_joint7"] == 7.0
+
+
+def test_set_gripper_width_sends_gripper_action_and_reports_state():
+    """夹爪宽度应换算成单侧 finger joint position 后发送 GripperCommand action。"""
+
+    class GripperClient(StubMoveItRuntimeClient):
+        def __init__(self):
+            super().__init__({})
+
+        def _run_ros2(self, args, timeout=None):
+            del timeout
+            self.commands.append(list(args))
+            if args[:5] == [
+                "ros2",
+                "action",
+                "send_goal",
+                "/panda_hand_controller/gripper_cmd",
+                "control_msgs/action/GripperCommand",
+            ]:
+                return {"success": True, "output": "Goal accepted\nResult: success", "lines": ["Goal accepted"]}
+            if args[:5] == ["ros2", "topic", "echo", "/joint_states", "--once"]:
+                return {
+                    "success": True,
+                    "output": """
+---
+name:
+- panda_finger_joint1
+- panda_finger_joint2
+position:
+- 0.03
+- 0.03
+---
+""",
+                }
+            return {"success": False, "error": f"unexpected command: {' '.join(args)}"}
+
+    client = GripperClient()
+    result = client.set_gripper_width(0.06, max_effort=2.0)
+
+    assert result["success"] is True
+    assert result["target_width"] == 0.06
+    assert result["command_position"] == 0.03
+    assert result["final_state"]["estimated_width"] == 0.06
+    assert '"position": 0.03' in client.commands[0][-1]
+    assert '"max_effort": 2.0' in client.commands[0][-1]
+
+
+def test_set_gripper_width_rejects_out_of_range_width():
+    result = StubMoveItRuntimeClient({}).set_gripper_width(0.2)
+
+    assert result["success"] is False
+    assert "0.080" in result["error"]
