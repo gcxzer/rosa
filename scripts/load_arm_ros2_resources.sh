@@ -173,13 +173,23 @@ else
 fi
 
 NEED_BUILD=0
+INSTALLED_PANDA_DESCRIPTION_PACKAGE="${ARM_AGENT_WS}/install/moveit_resources_panda_description/share/moveit_resources_panda_description/package.xml"
+INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE="${ARM_AGENT_WS}/install/moveit_resources_panda_moveit_config/share/moveit_resources_panda_moveit_config/package.xml"
 if [ "${ARM_AGENT_FORCE_BUILD:-0}" = "1" ]; then
   NEED_BUILD=1
-elif [ ! -f "${ARM_AGENT_WS}/install/setup.bash" ] && [ ! -f "${ARM_AGENT_WS}/install/setup.zsh" ]; then
+elif [ ! -f "${INSTALLED_PANDA_DESCRIPTION_PACKAGE}" ] || [ ! -f "${INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE}" ]; then
+  # 只检查 install/setup.bash 不够可靠：colcon 失败时也可能留下半成品 setup 文件。
+  # 真正判断 workspace 是否可用，要看这两个 vendored ROS package 有没有被安装到 install space。
   NEED_BUILD=1
-elif [ "${PANDA_DESCRIPTION_SRC}/package.xml" -nt "${ARM_AGENT_WS}/install/setup.bash" ]; then
+elif [ "${PANDA_DESCRIPTION_SRC}/package.xml" -nt "${INSTALLED_PANDA_DESCRIPTION_PACKAGE}" ]; then
   NEED_BUILD=1
-elif [ "${PANDA_MOVEIT_CONFIG_SRC}/package.xml" -nt "${ARM_AGENT_WS}/install/setup.bash" ]; then
+elif [ "${PANDA_DESCRIPTION_SRC}/CMakeLists.txt" -nt "${INSTALLED_PANDA_DESCRIPTION_PACKAGE}" ]; then
+  NEED_BUILD=1
+elif [ "${PANDA_MOVEIT_CONFIG_SRC}/package.xml" -nt "${INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE}" ]; then
+  NEED_BUILD=1
+elif [ "${PANDA_MOVEIT_CONFIG_SRC}/CMakeLists.txt" -nt "${INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE}" ]; then
+  NEED_BUILD=1
+elif [ "${PANDA_MOVEIT_CONFIG_SRC}/launch/arm_mujoco.launch.py" -nt "${INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE}" ]; then
   NEED_BUILD=1
 fi
 
