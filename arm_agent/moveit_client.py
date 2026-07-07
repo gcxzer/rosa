@@ -401,17 +401,44 @@ class MoveItRuntimeClient:
         }
 
     def get_end_effector_pose(self, frame_id: str, end_effector_link: str) -> dict[str, Any]:
-        result = self._run_ros2(
-            ["ros2", "run", "tf2_ros", "tf2_echo", frame_id, end_effector_link, "--once"],
-            timeout=self.timeout + 2.0,
-        )
-        if not result.get("success"):
+        # Jazzy/Humble 的 `tf2_echo` CLI 不都有 `--once` 参数。你 VM 里的日志就是因为
+        # `--once` 被当成非法参数，工具直接打印 Usage 并退出。这里改成用 `-r 1` 低频输出，
+        # 再靠 subprocess timeout 结束进程；只要 timeout 前拿到一段 Translation/Rotation 文本，
+        # 就可以解析出当前末端位姿。
+        args = ["ros2", "run", "tf2_ros", "tf2_echo", frame_id, end_effector_link, "-r", "1"]
+        try:
+            completed = subprocess.run(
+                args,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout + 2.0,
+            )
+            output = (completed.stdout or completed.stderr or "").strip()
+            if completed.returncode != 0:
+                return {
+                    "success": False,
+                    "error": f"读取 {end_effector_link} 在 {frame_id} 下的 TF 失败：{output or completed.returncode}",
+                }
+        except FileNotFoundError:
             return {
                 "success": False,
-                "error": f"读取 {end_effector_link} 在 {frame_id} 下的 TF 失败：{result.get('error')}",
+                "error": "找不到 ros2 命令。请先 source ROS2 环境。",
             }
+        except subprocess.TimeoutExpired as error:
+            stdout = error.stdout if error.stdout is not None else error.output
+            stderr = error.stderr
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode(errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+            output = (stdout or stderr or "").strip()
+            if not output:
+                return {
+                    "success": False,
+                    "error": f"读取 {end_effector_link} 在 {frame_id} 下的 TF 超时，且没有收到 tf2_echo 输出。",
+                }
 
-        output = result.get("output", "")
         # `tf2_echo` 的输出格式比较固定：一段 Translation 和一段 Quaternion。解析逻辑只在这个
         # 工具入口使用一次，所以直接放在这里，避免读者为了两行正则来回跳转。
         translation_match = re.search(

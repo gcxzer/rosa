@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 from arm_agent.moveit_client import MoveItRuntimeClient
 
@@ -533,6 +534,33 @@ def test_partial_joint_goal_is_completed_from_current_joint_states():
     assert result["success"] is True
     assert result["raw_plan"]["joint_goal"]["panda_joint1"] == 9.0
     assert result["raw_plan"]["joint_goal"]["panda_joint7"] == 7.0
+
+
+def test_end_effector_pose_uses_tf2_echo_without_once(monkeypatch):
+    """Jazzy 的 tf2_echo 不支持 --once；工具应靠 timeout 读取一次可解析输出。"""
+    commands = []
+
+    def fake_run(args, check=False, capture_output=True, text=True, timeout=None):
+        del check, capture_output, text
+        commands.append(list(args))
+        raise subprocess.TimeoutExpired(
+            cmd=args,
+            timeout=timeout,
+            output="""
+At time 123.0
+- Translation: [0.450, 0.100, 0.350]
+- Rotation: in Quaternion [0.000, 0.000, 0.707, 0.707]
+""",
+        )
+
+    monkeypatch.setattr("arm_agent.moveit_client.subprocess.run", fake_run)
+
+    result = MoveItRuntimeClient(timeout=0.1).get_end_effector_pose("panda_link0", "panda_hand")
+
+    assert result["success"] is True
+    assert commands == [["ros2", "run", "tf2_ros", "tf2_echo", "panda_link0", "panda_hand", "-r", "1"]]
+    assert result["pose"]["position"] == {"x": 0.45, "y": 0.1, "z": 0.35}
+    assert result["pose"]["orientation"]["z"] == 0.707
 
 
 def test_set_gripper_width_sends_gripper_action_and_reports_state():
