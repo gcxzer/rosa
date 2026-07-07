@@ -24,6 +24,7 @@ DEFAULT_BASE_FRAME = "panda_link0"
 DEFAULT_END_EFFECTOR_LINK = "panda_hand"
 DEFAULT_GRIPPER_OPENING_WIDTH = 0.07
 MAX_GRIPPER_OPENING_WIDTH = 0.08
+DEFAULT_DIRECT_TRAJECTORY_DURATION = 1.5
 GRIPPER_ACTION_NAME = "/panda_hand_controller/gripper_cmd"
 GRIPPER_ACTION_TYPE = "control_msgs/action/ParallelGripperCommand"
 LEGACY_GRIPPER_ACTION_TYPE = "control_msgs/action/GripperCommand"
@@ -499,7 +500,9 @@ class MoveItRuntimeClient:
             "raw_plan": {
                 "adapter": "joint_trajectory_topic",
                 "joint_goal": joint_goal,
-                "duration": 3.0,
+                # direct trajectory 的等待时间由这个 duration 决定。3 秒比较保守，
+                # 但连续执行 named target 时会在每一步结束后明显停顿；1.5 秒在仿真里更利落。
+                "duration": DEFAULT_DIRECT_TRAJECTORY_DURATION,
             },
             "metadata": {
                 "adapter": "joint_trajectory_topic",
@@ -550,7 +553,8 @@ class MoveItRuntimeClient:
             "raw_plan": {
                 "adapter": "joint_trajectory_topic",
                 "joint_goal": full_joint_goal,
-                "duration": 3.0,
+                # joint goal 和 named target 共用 direct trajectory adapter，默认时长保持一致。
+                "duration": DEFAULT_DIRECT_TRAJECTORY_DURATION,
             },
             "metadata": {
                 "adapter": "joint_trajectory_topic",
