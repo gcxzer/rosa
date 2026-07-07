@@ -550,9 +550,19 @@ class MoveItRuntimeClient:
                 .moveit_cpp(file_path=moveit_py_config)
                 .to_moveit_configs()
             )
+
+            moveit_config_dict = moveit_config.to_dict()
+            # `arm_mujoco.launch.py` 里 MuJoCo、controller_manager、robot_state_publisher 和
+            # move_group 都使用 `/clock` 仿真时间。ArmAgent 这里新建的 MoveItPy node 如果仍然
+            # 使用系统墙钟时间，就会把 `/joint_states` 里的仿真时间戳当成“10 秒前的旧状态”，
+            # 然后在 planning scene monitor 初始化阶段失败：
+            # `Requested time 1783..., latest received state has time 80...`。
+            # 所以这里必须像 launch 文件里的 Node(parameters=[..., {"use_sim_time": True}])
+            # 一样，把当前 Python MoveIt node 也切到仿真时间。
+            moveit_config_dict["use_sim_time"] = True
             moveit_py = planning_module.MoveItPy(
                 node_name="rosa_arm_agent",
-                config_dict=moveit_config.to_dict(),
+                config_dict=moveit_config_dict,
             )
         except Exception as error:
             return {"success": False, "error": f"初始化 MoveItPy 失败：{error}"}
