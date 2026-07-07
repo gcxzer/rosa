@@ -7,7 +7,7 @@ ROS2 + Codex + LangChain v1 的机器人 Agent 框架。
 
 - `TurtleAgent`：面向 `turtlesim` 的轻量示例，用来验证 ROS2 工具调用、绘图和多轮对话。
 - `ArmAgent`：面向机械臂的实现，当前默认目标是 Franka Emika Panda，使用 MoveIt2 规划，
-  使用 MuJoCo / `mujoco_ros2_control` 做仿真可视化。
+  使用 MuJoCo / `mujoco_ros2_control` 做仿真可视化，并通过常驻 MoveItPy server 执行 pose goal。
 
 ## Demo
 
@@ -75,6 +75,10 @@ uv run python main.py --agent turtle "把 turtle1 传送到 (3, 3)，然后画�
 source scripts/load_arm_ros2_resources.sh
 ros2 launch moveit_resources_panda_moveit_config arm_mujoco.launch.py
 ```
+
+这个 launch 会同时启动 `rosa_arm_moveit_server`。ArmAgent 的 pose goal 会通过
+`/rosa_arm_moveit_server/move_pose` 调用常驻 MoveItPy 节点，避免在聊天进程里临时初始化
+MoveItPy 时混用 wall time 和 sim time。
 
 如果想同时打开 RViz 查看 MoveIt planning scene：
 

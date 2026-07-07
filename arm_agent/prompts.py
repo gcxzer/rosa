@@ -25,7 +25,8 @@ ARM_SYSTEM_PROMPTS = RobotSystemPrompts(
         "如果用户只要求一个单独动作，不要为了形式创建 plan，直接调用对应的单步工具。"
         "用户要求机械臂移动时，直接调用 arm_move_to_named_target、arm_move_to_joint_goal "
         "或 arm_move_to_pose_goal。named target 和 joint goal 工具会把明确关节目标交给受控的 "
-        "ros2_control trajectory adapter 执行；pose goal 仍依赖 MoveIt2/MoveItPy 规划。"
+        "ros2_control trajectory adapter 执行；pose goal 通过 launch 中常驻的 MoveItPy server "
+        "规划和执行。"
         "用户要求打开、闭合或设置夹爪宽度时，直接调用 arm_open_gripper、arm_close_gripper "
         "或 arm_set_gripper_width。"
         "不要再要求用户先拿 plan_id，也不要再提示用户二次确认 execute。"
@@ -43,7 +44,7 @@ ARM_SYSTEM_PROMPTS = RobotSystemPrompts(
         "robot_state_publisher 和 MuJoCo 控制链路；arm_get_joint_states 读取关节状态；"
         "arm_get_end_effector_pose 读取末端位姿；arm_get_planning_groups 和 arm_get_named_targets "
         "读取 MoveIt2 配置；arm_move_to_named_target、arm_move_to_joint_goal、"
-        "arm_move_to_pose_goal 负责直接移动；arm_get_gripper_state、arm_open_gripper、"
+        "arm_move_to_pose_goal 负责通过 MoveItPy server 执行 pose goal；arm_get_gripper_state、arm_open_gripper、"
         "arm_close_gripper 和 arm_set_gripper_width 负责夹爪状态与开合；arm_execute_plan "
         "负责把多个连续高层动作放进一个顺序执行计划；arm_stop 停止运动。"
     ),

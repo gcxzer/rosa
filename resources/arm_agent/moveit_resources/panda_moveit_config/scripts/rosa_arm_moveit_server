@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""ArmAgent 的常驻 MoveItPy sidecar。
+
+这个进程由 `arm_mujoco.launch.py` 启动，和 MuJoCo、move_group、controller_manager
+共享同一个 ROS2 launch 生命周期。ArmAgent 的聊天进程不再临时 import / 初始化 MoveItPy，
+而是通过 `/rosa_arm_moveit_server/move_pose` service 把 pose goal 交给这里执行。
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import time
+import traceback
+
+import rclpy
+from ament_index_python.packages import get_package_share_directory
+from geometry_msgs.msg import PoseStamped
+from moveit.planning import MoveItPy
+from moveit_configs_utils import MoveItConfigsBuilder
+from rclpy.node import Node
+from rosgraph_msgs.msg import Clock
+from sensor_msgs.msg import JointState
+
+from moveit_resources_panda_moveit_config.srv import MovePose
+
+
+class RosaArmMoveItServer(Node):
+    """持有 MoveItPy 的 ROS2 service node。
+
+    MoveItPy 的 planning scene monitor 会订阅 `/joint_states` 和 TF，并且必须和仿真使用同一个
+    ROS 时间域。把它放到 launch 管理的独立 node 里，可以稳定传入 `use_sim_time=True`，也避免
+    每次工具调用都重新创建 planning scene monitor。
+    """
+
+    def __init__(self) -> None:
+        super().__init__("rosa_arm_moveit_server")
+        self._clock_seen = False
+        self._joint_state_seen = False
+        self._moveit_py = None
+        self._planning_components = {}
+
+        # 这两个订阅只做 readiness gate：确认 MuJoCo 的 `/clock` 和 ros2_control 的
+        # `/joint_states` 已经开始流动。MoveItPy 真正的状态监听仍由它自己的
+        # PlanningSceneMonitor / CurrentStateMonitor 负责。
+        self.create_subscription(Clock, "/clock", self._clock_callback, 10)
+        self.create_subscription(JointState, "/joint_states", self._joint_state_callback, 10)
+        self.create_service(MovePose, "~/move_pose", self._handle_move_pose)
+        self.get_logger().info("ROSA Arm MoveItPy server 已启动，等待 /clock 和 /joint_states。")
+
+    def _clock_callback(self, _message: Clock) -> None:
+        self._clock_seen = True
+
+    def _joint_state_callback(self, _message: JointState) -> None:
+        self._joint_state_seen = True
+
+    def _ensure_moveit_py(self) -> tuple[bool, str]:
+        if self._moveit_py is not None:
+            return True, ""
+        if not self._clock_seen:
+            return False, "还没有收到 /clock；请确认 MuJoCo 仿真已经开始发布仿真时间。"
+        if not self._joint_state_seen:
+            return False, "还没有收到 /joint_states；请确认 joint_state_broadcaster 已 active。"
+
+        package_name = "moveit_resources_panda_moveit_config"
+        package_share = get_package_share_directory(package_name)
+        mujoco_model = os.path.join(package_share, "mujoco", "franka_emika_panda", "scene_moveit.xml")
+        moveit_py_config = os.path.join(package_share, "config", "arm_moveit_py.yaml")
+
+        # 这里和 arm_mujoco.launch.py 使用同一套 Panda MoveIt 配置。关键点是显式写入
+        # `use_sim_time=True`：否则 MoveItPy 的 CurrentStateMonitor 会用 wall time 去检查
+        # `/joint_states`，从而把仿真时间戳误判成“过期状态”。
+        moveit_config = (
+            MoveItConfigsBuilder(
+                robot_name="moveit_resources_panda",
+                package_name=package_name,
+            )
+            .robot_description(
+                file_path="config/panda.urdf.xacro",
+                mappings={
+                    "ros2_control_hardware_type": "mujoco",
+                    "mujoco_model": mujoco_model,
+                    "headless": "false",
+                    "sim_speed_factor": "1.0",
+                },
+            )
+            .robot_description_semantic(file_path="config/panda.srdf")
+            .trajectory_execution(file_path="config/gripper_moveit_controllers.yaml")
+            .planning_pipelines(pipelines=["ompl"])
+            .moveit_cpp(file_path=moveit_py_config)
+            .to_moveit_configs()
+        )
+        moveit_config_dict = moveit_config.to_dict()
+        moveit_config_dict["use_sim_time"] = True
+
+        try:
+            self._moveit_py = MoveItPy(
+                node_name="rosa_arm_moveit_py",
+                config_dict=moveit_config_dict,
+            )
+        except Exception as error:
+            self.get_logger().error(f"MoveItPy 初始化失败：{error}")
+            self.get_logger().debug(traceback.format_exc())
+            return False, f"MoveItPy 初始化失败：{error}"
+
+        self.get_logger().info("MoveItPy 已初始化，并使用 ROS 仿真时间。")
+        return True, ""
+
+    def _handle_move_pose(self, request: MovePose.Request, response: MovePose.Response) -> MovePose.Response:
+        ready, error = self._ensure_moveit_py()
+        if not ready:
+            response.success = False
+            response.status = "not_ready"
+            response.error = error
+            return response
+
+        try:
+            pose_msg = PoseStamped()
+            pose_msg.header.frame_id = request.frame_id
+            pose_msg.header.stamp = self.get_clock().now().to_msg()
+            pose_msg.pose = request.pose
+
+            planning_component = self._planning_components.get(request.planning_group)
+            if planning_component is None:
+                planning_component = self._moveit_py.get_planning_component(request.planning_group)
+                self._planning_components[request.planning_group] = planning_component
+
+            # 每次 service 请求都从当前状态出发。这样 agent 可以连续发 pose goal，而不是复用
+            # 上一次规划时的旧起点。
+            planning_component.set_start_state_to_current_state()
+            planning_component.set_goal_state(
+                pose_stamped_msg=pose_msg,
+                pose_link=request.end_effector_link,
+            )
+            plan_result = planning_component.plan()
+            if not plan_result:
+                response.success = False
+                response.status = "planning_failed"
+                response.error = "MoveItPy 没有返回可执行 pose trajectory。"
+                return response
+
+            self._moveit_py.execute(plan_result.trajectory, controllers=[])
+        except Exception as error:
+            self.get_logger().error(f"pose goal 规划/执行失败：{error}")
+            self.get_logger().debug(traceback.format_exc())
+            response.success = False
+            response.status = "failed"
+            response.error = f"pose goal 规划/执行失败：{error}"
+            return response
+
+        response.success = True
+        response.status = "executed"
+        response.summary = f"已通过 MoveItPy server 执行 {request.frame_id} 下的 pose goal。"
+        return response
+
+
+def main() -> int:
+    rclpy.init()
+    node = RosaArmMoveItServer()
+
+    # 给 launch 后的 controller/spawner 一点时间启动。这里不直接初始化 MoveItPy，是为了避免
+    # PlanningSceneMonitor 在 `/joint_states` 还没出现时立刻失败；首次 service 调用时再懒加载。
+    deadline = time.monotonic() + 30.0
+    while rclpy.ok() and time.monotonic() < deadline and not (node._clock_seen and node._joint_state_seen):
+        rclpy.spin_once(node, timeout_sec=0.2)
+    if node._clock_seen and node._joint_state_seen:
+        node.get_logger().info("已收到 /clock 和 /joint_states，MoveItPy server 可以接受 pose goal。")
+    else:
+        node.get_logger().warn("启动后 30 秒内没有同时收到 /clock 和 /joint_states；service 会在调用时继续检查。")
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,11 @@
+# ArmAgent 通过这个 service 把 pose goal 交给常驻 MoveItPy server。
+# 这样 MoveItPy 的生命周期和 ROS2 launch 绑定，不再由聊天进程临时创建。
+string planning_group
+string frame_id
+string end_effector_link
+geometry_msgs/Pose pose
+---
+bool success
+string status
+string summary
+string error

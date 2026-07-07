@@ -86,6 +86,8 @@ for resource_path in \
   "${PANDA_MOVEIT_CONFIG_SRC}/config/arm_moveit_py.yaml" \
   "${PANDA_MOVEIT_CONFIG_SRC}/config/gripper_moveit_controllers.yaml" \
   "${PANDA_MOVEIT_CONFIG_SRC}/config/ros2_controllers.yaml" \
+  "${PANDA_MOVEIT_CONFIG_SRC}/srv/MovePose.srv" \
+  "${PANDA_MOVEIT_CONFIG_SRC}/scripts/rosa_arm_moveit_server" \
   "${PANDA_MOVEIT_CONFIG_SRC}/launch/arm_mujoco.launch.py" \
   "${PANDA_MOVEIT_CONFIG_SRC}/launch/demo.launch.py" \
   "${PANDA_MOVEIT_CONFIG_SRC}/launch/moveit.rviz" \
@@ -196,6 +198,13 @@ elif [ "${PANDA_MOVEIT_CONFIG_SRC}/config/arm_moveit_py.yaml" -nt "${INSTALLED_P
   # MoveItPy 的配置也是安装到 package share 里的运行资源。它改动后必须重建 workspace，
   # 否则 VM 里可能还在读旧 install space，继续报 planning pipeline 参数缺失。
   NEED_BUILD=1
+elif [ "${PANDA_MOVEIT_CONFIG_SRC}/srv/MovePose.srv" -nt "${INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE}" ]; then
+  # ArmAgent 的 pose goal 现在通过 ROS2 service 调常驻 MoveItPy server。service IDL 改动后
+  # 必须重新 colcon build，生成 Python service 类型。
+  NEED_BUILD=1
+elif [ "${PANDA_MOVEIT_CONFIG_SRC}/scripts/rosa_arm_moveit_server" -nt "${INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE}" ]; then
+  # server 脚本会被安装到 package 的 lib 目录；脚本改动后需要重建，launch 才会运行新版本。
+  NEED_BUILD=1
 elif [ "${MUJOCO_PANDA}" -nt "${INSTALLED_PANDA_MOVEIT_CONFIG_PACKAGE}" ]; then
   # MuJoCo MJCF 会被安装进 moveit_resources_panda_moveit_config 的 package share。
   # 夹爪 actuator、joint 名称或场景资源改动后必须重建，否则 ros2 launch 仍会读旧 MJCF。
@@ -267,6 +276,7 @@ for package_name in \
   moveit_kinematics \
   moveit_planners_ompl \
   moveit_ros_visualization \
+  rosidl_default_runtime \
   controller_manager \
   joint_state_broadcaster \
   joint_trajectory_controller \

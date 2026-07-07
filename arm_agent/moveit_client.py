@@ -506,11 +506,9 @@ class MoveItRuntimeClient:
                 str(group_state.get("group") or "") == planning_group
                 and str(group_state.get("name") or "") == target_name
             ):
-                # SRDF 的 named target 本质是一组关节角。当前 MuJoCo + MoveItPy 组合里，
-                # MoveItPy 一旦打开 `use_sim_time=True` 会触发 upstream 的
-                # `qos_overrides./clock.subscription.durability` abort；不开仿真时间又会把
-                # `/joint_states` 判断成过期。因此第一阶段对 named target 直接把 SRDF 关节角
-                # 发送给 ros2_control 的 JointTrajectoryController，绕开 MoveItPy 的执行管理器。
+                # SRDF 的 named target 本质是一组关节角。named target 不需要 IK 或笛卡尔规划，
+                # 直接把明确关节角发送给 ros2_control 的 JointTrajectoryController 更稳定，
+                # 也能避免为了一个固定姿态去占用 MoveItPy planning scene。
                 for joint in group_state.findall("joint"):
                     name = str(joint.get("name") or "").strip()
                     if name:
@@ -601,36 +599,23 @@ class MoveItRuntimeClient:
         end_effector_link: str,
         pose: dict[str, float],
     ) -> dict[str, Any]:
-        runtime = self._load_moveit_py()
-        if not runtime.get("success"):
-            return runtime
-
-        try:
-            pose_msg = runtime["pose_stamped_class"]()
-            pose_msg.header.frame_id = frame_id
-            pose_msg.pose.position.x = pose["position"]["x"]
-            pose_msg.pose.position.y = pose["position"]["y"]
-            pose_msg.pose.position.z = pose["position"]["z"]
-            pose_msg.pose.orientation.x = pose["orientation"]["x"]
-            pose_msg.pose.orientation.y = pose["orientation"]["y"]
-            pose_msg.pose.orientation.z = pose["orientation"]["z"]
-            pose_msg.pose.orientation.w = pose["orientation"]["w"]
-
-            planning_component = runtime["moveit_py"].get_planning_component(planning_group)
-            planning_component.set_start_state_to_current_state()
-            planning_component.set_goal_state(
-                pose_stamped_msg=pose_msg,
-                pose_link=end_effector_link,
-            )
-            plan_result = planning_component.plan()
-        except Exception as error:
-            return {"success": False, "error": f"MoveIt2 pose goal 规划失败：{error}"}
-
-        return _normalize_plan_result(
-            plan_result,
-            summary=f"已规划到 {frame_id} 下的末端 pose。",
-            adapter="moveit_py",
-        )
+        return {
+            "success": True,
+            "status": "prepared",
+            "summary": f"已准备通过常驻 MoveItPy server 执行 {frame_id} 下的末端 pose。",
+            "raw_plan": {
+                "adapter": "moveit_py_service",
+                "service": "/rosa_arm_moveit_server/move_pose",
+                "planning_group": planning_group,
+                "frame_id": frame_id,
+                "end_effector_link": end_effector_link,
+                "pose": pose,
+            },
+            "metadata": {
+                "adapter": "moveit_py_service",
+                "source": "rosa_arm_moveit_server",
+            },
+        }
 
     def execute_plan(self, plan_result: dict[str, Any]) -> dict[str, Any]:
         """执行当前工具调用刚刚得到的 MoveIt2 规划结果。
@@ -639,9 +624,9 @@ class MoveItRuntimeClient:
         `plan_to_*()` 得到本轮 trajectory，再立刻把这个 result 传进来执行。这样用户看到的是
         “移动到目标”这一件事。
 
-        注意：Jazzy 当前的 MoveItPy + `use_sim_time=True` 会在 C++ 层 abort 进程；所以
         named target / joint goal 会生成 `joint_trajectory_topic` direct plan，直接交给
-        ros2_control 的 `panda_arm_controller`。只有非 direct plan 才会进入 MoveItPy execute。
+        ros2_control 的 `panda_arm_controller`。pose goal 会通过 launch 中常驻的
+        `/rosa_arm_moveit_server/move_pose` service 执行，让 MoveItPy 与仿真共享同一个 ROS 时间域。
         """
         if not plan_result.get("success"):
             return {"success": False, "error": "规划未成功，不能执行。", "planning": plan_result}
@@ -764,16 +749,103 @@ class MoveItRuntimeClient:
                 # 这里只在整条 trajectory 的最后一个 waypoint 后读取最终 joint state；中间
                 # waypoint 不再逐个 sleep/读状态，否则会重新制造连续动作之间的停顿。
                 time.sleep(cumulative_time + DIRECT_TRAJECTORY_SETTLE_MARGIN)
+                execution_info = {
+                    "adapter": "joint_trajectory_topic",
+                    "waypoints": len(normalized_joint_goals),
+                    "segment_durations": segment_durations,
+                    "time_from_start": time_from_start_values,
+                }
+            elif isinstance(raw_plan, dict) and raw_plan.get("adapter") == "moveit_py_service":
+                try:
+                    rclpy = importlib.import_module("rclpy")
+                    srv_module = importlib.import_module("moveit_resources_panda_moveit_config.srv")
+                    move_pose_service = getattr(srv_module, "MovePose")
+                except ImportError as error:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"加载 MoveItPy service client 失败：{error}。请先 source "
+                            "`scripts/load_arm_ros2_resources.sh`，并确认 ROS2 workspace 已重新构建。"
+                        ),
+                        "planning": plan_result,
+                    }
+
+                # ArmAgent 主进程只作为 service client，不在这里创建 MoveItPy 或 planning scene。
+                # 真正的 MoveItPy 节点由 `arm_mujoco.launch.py` 启动，并使用 `use_sim_time=True`。
+                # 这样可以避免聊天进程临时初始化 MoveItPy 时出现 wall time / sim time 混用。
+                if not rclpy.ok():
+                    rclpy.init()
+                node = rclpy.create_node("rosa_arm_agent_pose_client")
+                try:
+                    service_name = str(raw_plan.get("service") or "/rosa_arm_moveit_server/move_pose")
+                    client = node.create_client(move_pose_service, service_name)
+                    if not client.wait_for_service(timeout_sec=self.timeout):
+                        return {
+                            "success": False,
+                            "error": (
+                                f"找不到 {service_name}。请用 "
+                                "`ros2 launch moveit_resources_panda_moveit_config arm_mujoco.launch.py` "
+                                "启动带 MoveItPy server 的机械臂仿真。"
+                            ),
+                            "planning": plan_result,
+                        }
+
+                    request = move_pose_service.Request()
+                    request.planning_group = str(raw_plan.get("planning_group") or DEFAULT_PLANNING_GROUP)
+                    request.frame_id = str(raw_plan.get("frame_id") or DEFAULT_BASE_FRAME)
+                    request.end_effector_link = str(raw_plan.get("end_effector_link") or self.end_effector_link)
+                    pose = dict(raw_plan.get("pose") or {})
+                    position = dict(pose.get("position") or {})
+                    orientation = dict(pose.get("orientation") or {})
+                    request.pose.position.x = float(position.get("x", 0.0))
+                    request.pose.position.y = float(position.get("y", 0.0))
+                    request.pose.position.z = float(position.get("z", 0.0))
+                    request.pose.orientation.x = float(orientation.get("x", 0.0))
+                    request.pose.orientation.y = float(orientation.get("y", 0.0))
+                    request.pose.orientation.z = float(orientation.get("z", 0.0))
+                    request.pose.orientation.w = float(orientation.get("w", 1.0))
+
+                    future = client.call_async(request)
+                    rclpy.spin_until_future_complete(node, future, timeout_sec=self.timeout + 30.0)
+                    if not future.done():
+                        return {
+                            "success": False,
+                            "error": f"调用 {service_name} 超时，MoveItPy server 没有在限定时间内返回。",
+                            "planning": plan_result,
+                        }
+                    response = future.result()
+                finally:
+                    node.destroy_node()
+
+                if response is None:
+                    return {
+                        "success": False,
+                        "error": "MoveItPy server 没有返回 response。",
+                        "planning": plan_result,
+                    }
+                if not bool(response.success):
+                    return {
+                        "success": False,
+                        "error": str(response.error or "MoveItPy server 执行 pose goal 失败。"),
+                        "status": str(response.status or "failed"),
+                        "planning": plan_result,
+                    }
+                execution_info = {
+                    "adapter": "moveit_py_service",
+                    "service": str(raw_plan.get("service") or "/rosa_arm_moveit_server/move_pose"),
+                    "status": str(response.status or "executed"),
+                    "summary": str(response.summary or ""),
+                }
             else:
                 runtime = self._load_moveit_py()
                 if not runtime.get("success"):
                     return runtime
                 trajectory = getattr(raw_plan, "trajectory", raw_plan)
                 runtime["moveit_py"].execute(trajectory, controllers=[])
+                execution_info = {"adapter": "moveit_py"}
         except Exception as error:
             return {"success": False, "error": f"MoveIt2 执行 plan 失败：{error}"}
 
-        direct_execution = isinstance(raw_plan, dict) and raw_plan.get("adapter") == "joint_trajectory_topic"
         return {
             "success": True,
             "status": "executed",
@@ -783,12 +855,7 @@ class MoveItRuntimeClient:
                 "summary": plan_result.get("summary"),
                 "metadata": dict(plan_result.get("metadata") or {}),
             },
-            "execution": {
-                "adapter": "joint_trajectory_topic" if direct_execution else "moveit_py",
-                "waypoints": len(normalized_joint_goals) if direct_execution else None,
-                "segment_durations": segment_durations if direct_execution else None,
-                "time_from_start": time_from_start_values if direct_execution else None,
-            },
+            "execution": execution_info,
             "final_state": self.get_joint_states(),
         }
 
@@ -1101,11 +1168,9 @@ class MoveItRuntimeClient:
             )
 
             moveit_config_dict = moveit_config.to_dict()
-            # 不在这里设置 `use_sim_time=True`。MoveItPy 当前版本存在 upstream 问题：
-            # 仿真时间会让 TrajectoryExecutionManager 拒绝 `/clock` 的 QoS override 参数，
-            # 然后 C++ 侧直接 abort Python 进程。named target / joint goal 已经在上层走
-            # ros2_control direct trajectory fallback；pose goal 如果需要 MoveItPy，宁可返回
-            # 一个可捕获的初始化/规划失败，也不能让整个 agent 进程崩掉。
+            # 这个本地 MoveItPy loader 只保留给旧 raw_plan fallback。正常 pose goal 已经改为调用
+            # launch 中常驻的 `rosa_arm_moveit_server`，由那个 ROS2 进程显式使用 sim time。
+            # 这里不再尝试修正仿真时间，避免聊天进程临时初始化 MoveItPy 时把 agent 带崩。
             moveit_py = planning_module.MoveItPy(
                 node_name="rosa_arm_agent",
                 config_dict=moveit_config_dict,

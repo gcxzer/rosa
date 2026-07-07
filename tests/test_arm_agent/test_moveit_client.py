@@ -1,5 +1,6 @@
 import json
 import subprocess
+import types
 
 from arm_agent.moveit_client import MoveItRuntimeClient
 
@@ -561,6 +562,122 @@ At time 123.0
     assert commands == [["ros2", "run", "tf2_ros", "tf2_echo", "panda_link0", "panda_hand", "-r", "1"]]
     assert result["pose"]["position"] == {"x": 0.45, "y": 0.1, "z": 0.35}
     assert result["pose"]["orientation"]["z"] == 0.707
+
+
+def test_pose_goal_prepares_moveit_service_plan_without_local_moveit_py(monkeypatch):
+    """pose goal 应交给常驻 MoveItPy server，不应在聊天进程里直接初始化 MoveItPy。"""
+    client = MoveItRuntimeClient()
+    monkeypatch.setattr(client, "_load_moveit_py", lambda: {"success": False, "error": "should not be called"})
+
+    result = client.plan_to_pose_goal(
+        planning_group="panda_arm",
+        frame_id="panda_link0",
+        end_effector_link="panda_hand",
+        pose={
+            "position": {"x": 0.4, "y": 0.0, "z": 0.35},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+        },
+    )
+
+    assert result["success"] is True
+    assert result["raw_plan"]["adapter"] == "moveit_py_service"
+    assert result["raw_plan"]["service"] == "/rosa_arm_moveit_server/move_pose"
+
+
+def test_execute_pose_goal_calls_moveit_service(monkeypatch):
+    """执行 pose goal 时应通过 ROS2 service 调常驻 MoveItPy server。"""
+
+    class PoseServiceClient(MoveItRuntimeClient):
+        def get_joint_states(self):
+            return {"success": True, "joint_states": {"panda_joint1": 0.1}}
+
+    class FakeMovePose:
+        class Request:
+            def __init__(self):
+                self.planning_group = ""
+                self.frame_id = ""
+                self.end_effector_link = ""
+                self.pose = types.SimpleNamespace(
+                    position=types.SimpleNamespace(x=0.0, y=0.0, z=0.0),
+                    orientation=types.SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
+                )
+
+    class FakeFuture:
+        def __init__(self, response):
+            self._response = response
+
+        def done(self):
+            return True
+
+        def result(self):
+            return self._response
+
+    class FakeServiceClient:
+        def __init__(self):
+            self.requests = []
+
+        def wait_for_service(self, timeout_sec):
+            del timeout_sec
+            return True
+
+        def call_async(self, request):
+            self.requests.append(request)
+            response = types.SimpleNamespace(
+                success=True,
+                status="executed",
+                summary="service executed",
+                error="",
+            )
+            return FakeFuture(response)
+
+    class FakeNode:
+        def __init__(self):
+            self.service_client = FakeServiceClient()
+
+        def create_client(self, service_type, service_name):
+            assert service_type is FakeMovePose
+            assert service_name == "/rosa_arm_moveit_server/move_pose"
+            return self.service_client
+
+        def destroy_node(self):
+            pass
+
+    fake_node = FakeNode()
+    fake_rclpy = types.SimpleNamespace(
+        ok=lambda: False,
+        init=lambda: None,
+        create_node=lambda name: fake_node,
+        spin_until_future_complete=lambda node, future, timeout_sec: None,
+    )
+    original_import = __import__("importlib").import_module
+
+    def fake_import_module(name):
+        if name == "rclpy":
+            return fake_rclpy
+        if name == "moveit_resources_panda_moveit_config.srv":
+            return types.SimpleNamespace(MovePose=FakeMovePose)
+        return original_import(name)
+
+    monkeypatch.setattr("arm_agent.moveit_client.importlib.import_module", fake_import_module)
+    client = PoseServiceClient(timeout=0.1)
+    plan_result = client.plan_to_pose_goal(
+        planning_group="panda_arm",
+        frame_id="panda_link0",
+        end_effector_link="panda_hand",
+        pose={
+            "position": {"x": 0.4, "y": 0.1, "z": 0.35},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.707, "w": 0.707},
+        },
+    )
+
+    executed = client.execute_plan(plan_result)
+    request = fake_node.service_client.requests[0]
+
+    assert executed["success"] is True
+    assert executed["execution"]["adapter"] == "moveit_py_service"
+    assert request.planning_group == "panda_arm"
+    assert request.pose.position.y == 0.1
+    assert request.pose.orientation.z == 0.707
 
 
 def test_set_gripper_width_sends_gripper_action_and_reports_state():

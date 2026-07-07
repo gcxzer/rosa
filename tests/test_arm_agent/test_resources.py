@@ -99,6 +99,8 @@ def test_bundled_moveit_panda_resources_are_present_and_parseable():
     assert (panda_moveit_config / "config" / "ros2_controllers.yaml").exists()
     assert (panda_moveit_config / "config" / "arm_moveit_py.yaml").exists()
     assert (panda_moveit_config / "launch" / "demo.launch.py").exists()
+    assert (panda_moveit_config / "srv" / "MovePose.srv").exists()
+    assert (panda_moveit_config / "scripts" / "rosa_arm_moveit_server").exists()
 
     # URDF 描述 link/joint，SRDF 描述 MoveIt planning group 和 named target。
     # 这两个 XML 能 parse，说明资源至少可以进入后续 ROS2/xacro/MoveIt 检查阶段。
@@ -106,6 +108,7 @@ def test_bundled_moveit_panda_resources_are_present_and_parseable():
     srdf_root = ElementTree.parse(panda_moveit_config / "config" / "panda.srdf").getroot()
     urdf_joint_names = {joint.attrib.get("name", "") for joint in urdf_root.findall("joint")}
     srdf_groups = {group.attrib.get("name", "") for group in srdf_root.findall("group")}
+    virtual_joint = srdf_root.find("virtual_joint[@name='virtual_joint']")
     srdf_group_states = {
         (group_state.attrib.get("group", ""), group_state.attrib.get("name", ""))
         for group_state in srdf_root.findall("group_state")
@@ -115,6 +118,8 @@ def test_bundled_moveit_panda_resources_are_present_and_parseable():
     assert {f"panda_joint{index}" for index in range(1, 8)}.issubset(urdf_joint_names)
     assert "panda_arm" in srdf_groups
     assert "hand" in srdf_groups
+    assert virtual_joint is not None
+    assert virtual_joint.attrib["type"] == "fixed"
     assert {
         ("panda_arm", "home"),
         ("panda_arm", "ready"),
@@ -123,3 +128,21 @@ def test_bundled_moveit_panda_resources_are_present_and_parseable():
     }.issubset(srdf_group_states)
     assert "ompl" in moveit_py_config["planning_pipelines"]["pipeline_names"]
     assert moveit_py_config["plan_request_params"]["planning_pipeline"] == "ompl"
+
+
+def test_arm_mujoco_launch_starts_moveit_py_server():
+    """确认 MuJoCo launch 会启动常驻 MoveItPy server，而不是只启动 move_group。"""
+    repo_root = Path(__file__).resolve().parents[2]
+    launch_path = (
+        repo_root
+        / "resources"
+        / "arm_agent"
+        / "moveit_resources"
+        / "panda_moveit_config"
+        / "launch"
+        / "arm_mujoco.launch.py"
+    )
+    launch_text = launch_path.read_text(encoding="utf-8")
+
+    assert "rosa_arm_moveit_server" in launch_text
+    assert '{"use_sim_time": True}' in launch_text

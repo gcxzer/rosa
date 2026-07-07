@@ -176,6 +176,17 @@ def generate_launch_description():
         output="both",
     )
 
+    rosa_arm_moveit_server_node = Node(
+        package=package_name,
+        executable="rosa_arm_moveit_server",
+        name="rosa_arm_moveit_server",
+        output="screen",
+        parameters=[
+            moveit_config.to_dict(),
+            {"use_sim_time": True},
+        ],
+    )
+
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -206,5 +217,6 @@ def generate_launch_description():
             joint_state_broadcaster_spawner,
             panda_arm_controller_spawner,
             panda_hand_controller_spawner,
+            rosa_arm_moveit_server_node,
         ]
     )
