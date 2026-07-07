@@ -813,11 +813,34 @@ class MoveItRuntimeClient:
         # `ros2 param get`，VM 里的 `/move_group` 参数服务偶尔会在第二次读取时超时。
         # 因此第一次成功读取并剥出 SRDF XML 后缓存到当前 runtime client，后续步骤直接复用。
         result = self._run_ros2(["ros2", "param", "get", "/move_group", "robot_description_semantic"])
+        source = "move_group_parameter"
         if not result.get("success"):
-            return {
-                "success": False,
-                "error": f"无法读取 /move_group robot_description_semantic：{result.get('error')}",
-            }
+            parameter_error = result.get("error")
+            # 有些 VM 里 `/move_group` 参数服务会偶发卡住，但 launch 同时会发布
+            # `/robot_description_semantic` topic。你这次日志里 topic 已经存在，所以参数读取失败时
+            # 继续从 topic 读一次 SRDF，避免整段 plan 在第一步之前就失败。
+            result = self._run_ros2(
+                [
+                    "ros2",
+                    "topic",
+                    "echo",
+                    "/robot_description_semantic",
+                    "--once",
+                    "--spin-time",
+                    str(self.timeout),
+                ],
+                timeout=self.timeout + 3.0,
+            )
+            source = "robot_description_semantic_topic"
+            if not result.get("success"):
+                return {
+                    "success": False,
+                    "error": (
+                        "无法读取 robot_description_semantic："
+                        f"/move_group 参数失败：{parameter_error}；"
+                        f"/robot_description_semantic topic 失败：{result.get('error')}"
+                    ),
+                }
 
         value = str(result.get("output") or "")
         # `ros2 param get` 的输出不是纯 XML，通常会在真正的 SRDF 前面加一段提示文字：
@@ -828,10 +851,30 @@ class MoveItRuntimeClient:
             if prefix in value:
                 value = value.split(prefix, 1)[1].strip()
                 break
+        if source == "robot_description_semantic_topic":
+            # `ros2 topic echo /robot_description_semantic --once` 常见输出是 YAML：
+            #   data: "<robot ...>...</robot>"
+            # 但 DDS 提示或 `---` 分隔符可能混在前面，所以先尝试从 YAML 文档里取 `data`；
+            # 如果解析失败，再退回到从原始文本里截取 `<robot ...>`。
+            for document in value.split("---"):
+                if "data:" not in document:
+                    continue
+                try:
+                    candidate = yaml.safe_load(document)
+                except yaml.YAMLError:
+                    continue
+                if isinstance(candidate, dict) and isinstance(candidate.get("data"), str):
+                    value = candidate["data"].strip()
+                    break
+            else:
+                robot_start = value.find("<robot")
+                robot_end = value.rfind("</robot>")
+                if robot_start >= 0 and robot_end >= robot_start:
+                    value = value[robot_start : robot_end + len("</robot>")].strip()
         if not value:
             return {"success": False, "error": "robot_description_semantic 为空。"}
         self._robot_description_semantic = value
-        return {"success": True, "value": value, "cached": False}
+        return {"success": True, "value": value, "cached": False, "source": source}
 
     def _load_moveit_py(self) -> dict[str, Any]:
         if self._moveit_py is not None:

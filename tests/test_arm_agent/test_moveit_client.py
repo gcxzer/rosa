@@ -248,6 +248,60 @@ String value is: <robot name="panda">
     assert semantic_reads == [["ros2", "param", "get", "/move_group", "robot_description_semantic"]]
 
 
+def test_robot_description_semantic_falls_back_to_topic_when_parameter_times_out():
+    """`/move_group` 参数服务超时时，应从 `/robot_description_semantic` topic 读取 SRDF。"""
+    client = StubMoveItRuntimeClient(
+        {
+            ("ros2", "param", "get", "/move_group", "robot_description_semantic"): {
+                "success": False,
+                "error": "命令超时：ros2 param get /move_group robot_description_semantic",
+            },
+            (
+                "ros2",
+                "topic",
+                "echo",
+                "/robot_description_semantic",
+                "--once",
+                "--spin-time",
+                "0.1",
+            ): {
+                "success": True,
+                "output": """
+data: |
+  <robot name="panda">
+    <group_state group="panda_arm" name="ready">
+      <joint name="panda_joint1" value="0.1"/>
+      <joint name="panda_joint2" value="0.2"/>
+      <joint name="panda_joint3" value="0.3"/>
+      <joint name="panda_joint4" value="0.4"/>
+      <joint name="panda_joint5" value="0.5"/>
+      <joint name="panda_joint6" value="0.6"/>
+      <joint name="panda_joint7" value="0.7"/>
+    </group_state>
+  </robot>
+""",
+            },
+        }
+    )
+
+    result = client.plan_to_named_target("panda_arm", "ready")
+
+    assert result["success"] is True
+    assert result["raw_plan"]["joint_goal"]["panda_joint7"] == 0.7
+    assert client.commands == [
+        ["ros2", "param", "get", "/move_group", "robot_description_semantic"],
+        [
+            "ros2",
+            "topic",
+            "echo",
+            "/robot_description_semantic",
+            "--once",
+            "--spin-time",
+            "0.1",
+        ],
+    ]
+
+
 def test_execute_direct_joint_trajectory_publishes_controller_topic(monkeypatch):
     """direct trajectory 执行时应发布给 ros2_control，而不是先加载 MoveItPy。"""
 
