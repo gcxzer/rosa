@@ -261,6 +261,60 @@ def test_execute_plan_runs_named_targets_in_order(monkeypatch):
     assert result["latest_state"]["joint"]["joint_states"]["panda_joint1"] == 0.2
 
 
+def test_execute_plan_combines_direct_named_targets_into_one_trajectory(monkeypatch):
+    class DirectTrajectoryClient(FakeMoveItClient):
+        def __init__(self):
+            super().__init__()
+            self.executed_raw_plans = []
+
+        def plan_to_named_target(self, planning_group, target_name):
+            del planning_group
+            offset = 10.0 if target_name == "home" else 0.0
+            return {
+                "success": True,
+                "status": "planned",
+                "summary": f"direct:{target_name}",
+                "raw_plan": {
+                    "adapter": "joint_trajectory_topic",
+                    "duration": 1.5,
+                    "joint_goal": {
+                        f"panda_joint{index}": float(index) + offset
+                        for index in range(1, 8)
+                    },
+                },
+            }
+
+        def execute_plan(self, plan_result):
+            self.executed_raw_plans.append(plan_result["raw_plan"])
+            return {
+                "success": True,
+                "status": "executed",
+                "planning": {"summary": plan_result["summary"]},
+                "final_state": {"joint_states": {"panda_joint1": 11.0}},
+            }
+
+    client = DirectTrajectoryClient()
+    monkeypatch.setattr(arm_tools, "_CLIENT_FACTORY", lambda: client)
+
+    result = arm_tools.arm_execute_plan.invoke(
+        {
+            "steps": [
+                {"action": "move_named", "target_name": "extended"},
+                {"action": "move_named", "target_name": "home"},
+            ]
+        }
+    )
+
+    assert result["success"] is True
+    assert result["executed_steps"] == 2
+    assert result["summary"] == "已用一条连续 trajectory 执行 2 个 named target。"
+    assert len(client.executed_raw_plans) == 1
+    assert len(client.executed_raw_plans[0]["joint_goals"]) == 2
+    assert client.executed_raw_plans[0]["joint_goals"][0]["panda_joint7"] == 7.0
+    assert client.executed_raw_plans[0]["joint_goals"][1]["panda_joint7"] == 17.0
+    assert result["latest_state"]["joint"]["joint_states"]["panda_joint1"] == 11.0
+
+
 def test_execute_plan_runs_gripper_steps(monkeypatch):
     client = FakeMoveItClient()
     monkeypatch.setattr(arm_tools, "_CLIENT_FACTORY", lambda: client)

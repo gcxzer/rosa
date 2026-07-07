@@ -1,3 +1,5 @@
+import json
+
 from arm_agent.moveit_client import MoveItRuntimeClient
 
 
@@ -296,6 +298,58 @@ def test_execute_direct_joint_trajectory_publishes_controller_topic(monkeypatch)
         "trajectory_msgs/msg/JointTrajectory",
     ]
     assert '"panda_joint7"' in client.commands[0][-1]
+
+
+def test_execute_direct_joint_trajectory_supports_multiple_waypoints(monkeypatch):
+    """连续 named target 应能合成一条多 waypoint trajectory，避免两步之间 Python 停顿。"""
+
+    class PublishingClient(StubMoveItRuntimeClient):
+        def __init__(self):
+            super().__init__({})
+            self.sleeps = []
+
+        def _run_ros2(self, args, timeout=None):
+            del timeout
+            self.commands.append(list(args))
+            if args[:5] == [
+                "ros2",
+                "topic",
+                "pub",
+                "--once",
+                "/panda_arm_controller/joint_trajectory",
+            ]:
+                return {"success": True, "output": "published", "lines": ["published"]}
+            return {"success": False, "error": f"unexpected command: {' '.join(args)}"}
+
+        def get_joint_states(self):
+            return {"success": True, "joint_states": {"panda_joint1": 0.1}}
+
+    client = PublishingClient()
+    monkeypatch.setattr("arm_agent.moveit_client.time.sleep", lambda seconds: client.sleeps.append(seconds))
+    first_goal = {f"panda_joint{index}": float(index) for index in range(1, 8)}
+    second_goal = {f"panda_joint{index}": float(index + 10) for index in range(1, 8)}
+    plan_result = {
+        "success": True,
+        "status": "planned",
+        "summary": "combined",
+        "raw_plan": {
+            "adapter": "joint_trajectory_topic",
+            "duration": 1.5,
+            "joint_goals": [first_goal, second_goal],
+        },
+        "metadata": {"adapter": "joint_trajectory_topic"},
+    }
+
+    executed = client.execute_plan(plan_result)
+    payload = json.loads(client.commands[0][-1])
+
+    assert executed["success"] is True
+    assert len(payload["points"]) == 2
+    assert payload["points"][0]["positions"][-1] == 7.0
+    assert payload["points"][0]["time_from_start"] == {"sec": 1, "nanosec": 500000000}
+    assert payload["points"][1]["positions"][-1] == 17.0
+    assert payload["points"][1]["time_from_start"] == {"sec": 3, "nanosec": 0}
+    assert client.sleeps == [3.2]
 
 
 def test_partial_joint_goal_is_completed_from_current_joint_states():

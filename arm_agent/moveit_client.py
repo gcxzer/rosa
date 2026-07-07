@@ -621,27 +621,49 @@ class MoveItRuntimeClient:
 
         try:
             if isinstance(raw_plan, dict) and raw_plan.get("adapter") == "joint_trajectory_topic":
-                joint_goal = dict(raw_plan.get("joint_goal") or {})
-                joint_names = [f"panda_joint{index}" for index in range(1, 8)]
-                missing_joints = [joint_name for joint_name in joint_names if joint_name not in joint_goal]
-                if missing_joints:
+                raw_joint_goals = raw_plan.get("joint_goals")
+                if raw_joint_goals is None:
+                    raw_joint_goals = [raw_plan.get("joint_goal")]
+                if not isinstance(raw_joint_goals, list) or not raw_joint_goals:
                     return {
                         "success": False,
-                        "error": f"直接关节轨迹缺少这些 Panda arm 关节：{missing_joints}",
+                        "error": "直接关节轨迹缺少 joint_goal 或 joint_goals。",
                         "planning": plan_result,
                     }
 
+                joint_names = [f"panda_joint{index}" for index in range(1, 8)]
+                normalized_joint_goals: list[dict[str, float]] = []
+                for point_index, raw_joint_goal in enumerate(raw_joint_goals, start=1):
+                    joint_goal = dict(raw_joint_goal or {})
+                    missing_joints = [joint_name for joint_name in joint_names if joint_name not in joint_goal]
+                    if missing_joints:
+                        return {
+                            "success": False,
+                            "error": f"直接关节轨迹第 {point_index} 个 waypoint 缺少这些 Panda arm 关节：{missing_joints}",
+                            "planning": plan_result,
+                        }
+                    normalized_joint_goals.append(
+                        {joint_name: float(joint_goal[joint_name]) for joint_name in joint_names}
+                    )
+
                 duration = float(raw_plan.get("duration", 3.0))
-                sec = max(1, int(duration))
-                nanosec = max(0, int((duration - sec) * 1_000_000_000))
-                payload = {
-                    "joint_names": joint_names,
-                    "points": [
+                points = []
+                for point_index, joint_goal in enumerate(normalized_joint_goals, start=1):
+                    # 多个 waypoint 一次发布时，time_from_start 必须是从轨迹开始累计的时间。
+                    # 这样 controller 会在到达 extended 后继续跟踪 home，不需要 Python 等一段
+                    # 再发第二条 trajectory，自然也不会出现用户看到的中间停顿。
+                    point_time = duration * point_index
+                    sec = max(1, int(point_time))
+                    nanosec = max(0, int((point_time - sec) * 1_000_000_000))
+                    points.append(
                         {
-                            "positions": [float(joint_goal[joint_name]) for joint_name in joint_names],
+                            "positions": [joint_goal[joint_name] for joint_name in joint_names],
                             "time_from_start": {"sec": sec, "nanosec": nanosec},
                         }
-                    ],
+                    )
+                payload = {
+                    "joint_names": joint_names,
+                    "points": points,
                 }
                 publish_result = self._run_ros2(
                     [
@@ -663,9 +685,9 @@ class MoveItRuntimeClient:
                     }
 
                 # `ros2 topic pub --once` 只保证消息发出去，不代表控制器已经走完轨迹。
-                # 这里等待 trajectory 的 `time_from_start`，再读取最终 joint state，避免用户看到
-                # “已执行”但状态还是起点。
-                time.sleep(duration + 0.2)
+                # 这里只在整条 trajectory 的最后一个 waypoint 后读取最终 joint state；中间
+                # waypoint 不再逐个 sleep/读状态，否则会重新制造连续动作之间的停顿。
+                time.sleep((duration * len(normalized_joint_goals)) + 0.2)
             else:
                 runtime = self._load_moveit_py()
                 if not runtime.get("success"):
