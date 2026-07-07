@@ -25,6 +25,9 @@ DEFAULT_END_EFFECTOR_LINK = "panda_hand"
 DEFAULT_GRIPPER_OPENING_WIDTH = 0.07
 MAX_GRIPPER_OPENING_WIDTH = 0.08
 DEFAULT_DIRECT_TRAJECTORY_DURATION = 1.5
+DIRECT_TRAJECTORY_MIN_SEGMENT_DURATION = 0.35
+DIRECT_TRAJECTORY_MAX_JOINT_SPEED = 2.0
+DIRECT_TRAJECTORY_SETTLE_MARGIN = 0.2
 GRIPPER_ACTION_NAME = "/panda_hand_controller/gripper_cmd"
 GRIPPER_ACTION_TYPE = "control_msgs/action/ParallelGripperCommand"
 LEGACY_GRIPPER_ACTION_TYPE = "control_msgs/action/GripperCommand"
@@ -646,21 +649,67 @@ class MoveItRuntimeClient:
                         {joint_name: float(joint_goal[joint_name]) for joint_name in joint_names}
                     )
 
-                duration = float(raw_plan.get("duration", 3.0))
+                configured_duration = float(raw_plan.get("duration", DEFAULT_DIRECT_TRAJECTORY_DURATION))
+                if configured_duration <= 0:
+                    configured_duration = DEFAULT_DIRECT_TRAJECTORY_DURATION
+
+                # `JointTrajectoryController` 需要每个 waypoint 都有递增的 `time_from_start`。
+                # 之前的做法是“每个 waypoint 固定 1.5 秒”，短距离和长距离一样慢，所以机械臂
+                # 到达中间姿态附近后会像是在等下一拍。这里改成按关节距离估算每段时间：
+                # - 先尽量读取当前 /joint_states，用它计算“当前位置 -> 第一个 waypoint”。
+                # - 后续段直接用“上一个 waypoint -> 下一个 waypoint”。
+                # - 取 7 个关节里最大的角度变化作为这一段的距离，除以一个保守的仿真速度上限。
+                # - 再用最小段时间兜底，避免极短距离被压到 controller 来不及跟踪。
+                current_state = self.get_joint_states()
+                previous_joint_goal: Optional[dict[str, float]] = None
+                if current_state.get("success"):
+                    current_joint_states = dict(current_state.get("joint_states") or {})
+                    if all(isinstance(current_joint_states.get(joint_name), (int, float)) for joint_name in joint_names):
+                        previous_joint_goal = {
+                            joint_name: float(current_joint_states[joint_name])
+                            for joint_name in joint_names
+                        }
+
+                cumulative_time = 0.0
+                segment_durations: list[float] = []
+                time_from_start_values: list[float] = []
                 points = []
                 for point_index, joint_goal in enumerate(normalized_joint_goals, start=1):
-                    # 多个 waypoint 一次发布时，time_from_start 必须是从轨迹开始累计的时间。
-                    # 这样 controller 会在到达 extended 后继续跟踪 home，不需要 Python 等一段
-                    # 再发第二条 trajectory，自然也不会出现用户看到的中间停顿。
-                    point_time = duration * point_index
-                    sec = max(1, int(point_time))
-                    nanosec = max(0, int((point_time - sec) * 1_000_000_000))
+                    if previous_joint_goal is None:
+                        # 如果启动时没有读到完整 joint_states，就只对第一段使用配置的保守时间。
+                        # 从第二个 waypoint 开始仍然可以用上一目标点计算距离。
+                        segment_duration = configured_duration
+                    else:
+                        max_joint_delta = max(
+                            abs(joint_goal[joint_name] - previous_joint_goal[joint_name])
+                            for joint_name in joint_names
+                        )
+                        segment_duration = max(
+                            DIRECT_TRAJECTORY_MIN_SEGMENT_DURATION,
+                            max_joint_delta / DIRECT_TRAJECTORY_MAX_JOINT_SPEED,
+                        )
+                        segment_duration = min(configured_duration, segment_duration)
+
+                    cumulative_time += segment_duration
+                    segment_durations.append(segment_duration)
+                    time_from_start_values.append(cumulative_time)
+
+                    # 支持小于 1 秒的 waypoint。原来的 `max(1, int(point_time))` 会把 0.35 秒
+                    # 强行写成 1 秒，这正是“看起来怎么改 duration 都没变化”的原因之一。
+                    sec = int(cumulative_time)
+                    nanosec = int(round((cumulative_time - sec) * 1_000_000_000))
+                    if nanosec >= 1_000_000_000:
+                        sec += 1
+                        nanosec -= 1_000_000_000
+                    if sec == 0 and nanosec == 0:
+                        nanosec = 1_000_000
                     points.append(
                         {
                             "positions": [joint_goal[joint_name] for joint_name in joint_names],
                             "time_from_start": {"sec": sec, "nanosec": nanosec},
                         }
                     )
+                    previous_joint_goal = joint_goal
                 payload = {
                     "joint_names": joint_names,
                     "points": points,
@@ -687,7 +736,7 @@ class MoveItRuntimeClient:
                 # `ros2 topic pub --once` 只保证消息发出去，不代表控制器已经走完轨迹。
                 # 这里只在整条 trajectory 的最后一个 waypoint 后读取最终 joint state；中间
                 # waypoint 不再逐个 sleep/读状态，否则会重新制造连续动作之间的停顿。
-                time.sleep((duration * len(normalized_joint_goals)) + 0.2)
+                time.sleep(cumulative_time + DIRECT_TRAJECTORY_SETTLE_MARGIN)
             else:
                 runtime = self._load_moveit_py()
                 if not runtime.get("success"):
@@ -697,6 +746,7 @@ class MoveItRuntimeClient:
         except Exception as error:
             return {"success": False, "error": f"MoveIt2 执行 plan 失败：{error}"}
 
+        direct_execution = isinstance(raw_plan, dict) and raw_plan.get("adapter") == "joint_trajectory_topic"
         return {
             "success": True,
             "status": "executed",
@@ -705,6 +755,12 @@ class MoveItRuntimeClient:
                 "status": plan_result.get("status"),
                 "summary": plan_result.get("summary"),
                 "metadata": dict(plan_result.get("metadata") or {}),
+            },
+            "execution": {
+                "adapter": "joint_trajectory_topic" if direct_execution else "moveit_py",
+                "waypoints": len(normalized_joint_goals) if direct_execution else None,
+                "segment_durations": segment_durations if direct_execution else None,
+                "time_from_start": time_from_start_values if direct_execution else None,
             },
             "final_state": self.get_joint_states(),
         }

@@ -461,6 +461,60 @@ def test_execute_direct_joint_trajectory_supports_multiple_waypoints(monkeypatch
     assert client.sleeps == [3.2]
 
 
+def test_execute_direct_joint_trajectory_uses_joint_distance_timing(monkeypatch):
+    """连续 waypoint 应按关节距离分配时间，短距离不要被固定 duration 拖慢。"""
+
+    class PublishingClient(StubMoveItRuntimeClient):
+        def __init__(self):
+            super().__init__({})
+            self.sleeps = []
+
+        def _run_ros2(self, args, timeout=None):
+            del timeout
+            self.commands.append(list(args))
+            if args[:5] == [
+                "ros2",
+                "topic",
+                "pub",
+                "--once",
+                "/panda_arm_controller/joint_trajectory",
+            ]:
+                return {"success": True, "output": "published", "lines": ["published"]}
+            return {"success": False, "error": f"unexpected command: {' '.join(args)}"}
+
+        def get_joint_states(self):
+            return {
+                "success": True,
+                "joint_states": {f"panda_joint{index}": 0.0 for index in range(1, 8)},
+            }
+
+    client = PublishingClient()
+    monkeypatch.setattr("arm_agent.moveit_client.time.sleep", lambda seconds: client.sleeps.append(seconds))
+    first_goal = {f"panda_joint{index}": 0.2 for index in range(1, 8)}
+    second_goal = {f"panda_joint{index}": 0.4 for index in range(1, 8)}
+    plan_result = {
+        "success": True,
+        "status": "planned",
+        "summary": "short combined",
+        "raw_plan": {
+            "adapter": "joint_trajectory_topic",
+            "duration": 1.5,
+            "joint_goals": [first_goal, second_goal],
+        },
+        "metadata": {"adapter": "joint_trajectory_topic"},
+    }
+
+    executed = client.execute_plan(plan_result)
+    payload = json.loads(client.commands[0][-1])
+
+    assert executed["success"] is True
+    assert payload["points"][0]["time_from_start"] == {"sec": 0, "nanosec": 350000000}
+    assert payload["points"][1]["time_from_start"] == {"sec": 0, "nanosec": 700000000}
+    assert executed["execution"]["segment_durations"] == [0.35, 0.35]
+    assert executed["execution"]["time_from_start"] == [0.35, 0.7]
+    assert round(client.sleeps[0], 3) == 0.9
+
+
 def test_partial_joint_goal_is_completed_from_current_joint_states():
     """用户只指定部分关节时，工具应从当前状态补齐完整 Panda 7 轴目标。"""
 
