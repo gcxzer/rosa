@@ -1,12 +1,13 @@
 """ROSA 本地统一入口。
 
-当前入口支持 TurtleAgent 和 ArmAgent。新增机器人 agent 时，继续在这个统一入口里扩展
+当前入口支持 TurtleAgent、ArmAgent 和 NavAgent。新增机器人 agent 时，继续在这个统一入口里扩展
 `--agent` choices 和创建逻辑，不再新增多个 main 文件。
 
 运行示例：
 
     uv run python main.py --agent arm "跳个舞看看，10个动作，不控制夹爪"  
     uv run python main.py --agent arm "检查机械臂运行栈是否就绪"
+    uv run python main.py --agent nav "导航到充电站"
     uv run python main.py --agent turtle --session-id 20260706_120000_abcd1234
 """
 
@@ -16,6 +17,7 @@ import argparse
 import asyncio
 
 from arm_agent import ArmAgent
+from nav_agent import NavAgent
 from sessions import ROSASessionStore, SessionNotFoundError, run_session_prompt
 from turtle_agent import TurtleAgent
 
@@ -24,7 +26,7 @@ async def main() -> None:
     """解析命令行参数，创建指定 agent，并消费 `ROSA.astream()` 的事件流。"""
     parser = argparse.ArgumentParser(description="ROSA 本地统一测试入口")
     parser.add_argument("prompt", nargs="*", help="要发送给 agent 的文本；提供时会先作为多轮对话的第一条消息。")
-    parser.add_argument("--agent", default="turtle", choices=["turtle", "arm"], help="要启动的 agent。turtle 用于 turtlesim，arm 用于 MoveIt2 + MuJoCo 机械臂。")
+    parser.add_argument("--agent", default="turtle", choices=["turtle", "arm", "nav"], help="要启动的 agent。turtle 用于 turtlesim，arm 用于 MuJoCo 机械臂，nav 用于 MuJoCo + Nav2 移动导航。")
     parser.add_argument("--model", default="gpt-5.5", help="传给 Codex Responses API 的模型名。")
     parser.add_argument("--thinking", default="none", choices=["none", "low", "medium", "high", "xhigh"], help="Codex reasoning effort。none 表示不覆盖默认 thinking。")
     parser.add_argument("--session-id", default="", help="继续已有 session；不传时会创建新 session。")
@@ -43,9 +45,12 @@ async def main() -> None:
     if args.agent == "turtle":
         agent = TurtleAgent(model=args.model, thinking=thinking, streaming=True)
         agent_title = "TurtleAgent chat"
-    else:
+    elif args.agent == "arm":
         agent = ArmAgent(model=args.model, thinking=thinking, streaming=True)
         agent_title = "ArmAgent chat"
+    else:
+        agent = NavAgent(model=args.model, thinking=thinking, streaming=True)
+        agent_title = "NavAgent chat"
 
     if args.session_id:
         try:

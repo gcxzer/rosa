@@ -52,6 +52,8 @@ where = ["src", "."]
 include = [
     "arm_agent",
     "arm_agent.*",
+    "nav_agent",
+    "nav_agent.*",
     "codex",
     "codex.*",
     "prompts",

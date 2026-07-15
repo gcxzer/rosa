@@ -1,0 +1,107 @@
+<?xml version="1.0"?>
+<robot name="rosa_stretch_nav" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="headless" default="false"/>
+  <xacro:arg name="sim_speed_factor" default="1.0"/>
+  <xacro:arg name="mujoco_model" default="$(find rosa_nav_bringup)/mujoco/office_lab_scene.xml"/>
+
+  <link name="base_footprint"/>
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0.09"/>
+      <geometry><box size="0.45 0.34 0.18"/></geometry>
+      <material name="stretch_gray"><color rgba="0.58 0.60 0.62 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.09"/>
+      <geometry><box size="0.45 0.34 0.18"/></geometry>
+    </collision>
+  </link>
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  </joint>
+
+  <link name="link_left_wheel">
+    <visual><geometry><cylinder radius="0.05" length="0.025"/></geometry></visual>
+  </link>
+  <joint name="joint_left_wheel" type="continuous">
+    <parent link="base_link"/>
+    <child link="link_left_wheel"/>
+    <origin xyz="0 0.17035 0.0508" rpy="1.5707963268 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <link name="link_right_wheel">
+    <visual><geometry><cylinder radius="0.05" length="0.025"/></geometry></visual>
+  </link>
+  <joint name="joint_right_wheel" type="continuous">
+    <parent link="base_link"/>
+    <child link="link_right_wheel"/>
+    <origin xyz="0 -0.17035 0.0508" rpy="1.5707963268 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <link name="laser">
+    <visual>
+      <geometry><cylinder radius="0.035" length="0.04"/></geometry>
+      <material name="laser_black"><color rgba="0.05 0.05 0.05 1"/></material>
+    </visual>
+  </link>
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser"/>
+    <origin xyz="0.004 0 0.1664"/>
+  </joint>
+
+  <link name="mast_link">
+    <visual>
+      <origin xyz="-0.067 0.135 0.68"/>
+      <geometry><box size="0.06 0.06 1.30"/></geometry>
+      <material name="mast_black"><color rgba="0.08 0.08 0.08 1"/></material>
+    </visual>
+  </link>
+  <joint name="mast_fixed_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="mast_link"/>
+  </joint>
+
+  <ros2_control name="MujocoSystem" type="system">
+    <hardware>
+      <plugin>mujoco_ros2_control/MujocoSystemInterface</plugin>
+      <param name="mujoco_model">$(arg mujoco_model)</param>
+      <param name="headless">$(arg headless)</param>
+      <param name="sim_speed_factor">$(arg sim_speed_factor)</param>
+      <param name="initial_keyframe">stow</param>
+      <param name="odom_free_joint_name">base_free_joint</param>
+      <param name="odom_topic">/ground_truth/odom</param>
+      <param name="lidar_publish_rate">10.0</param>
+    </hardware>
+
+    <joint name="joint_left_wheel">
+      <command_interface name="velocity">
+        <param name="min">-6.0</param>
+        <param name="max">6.0</param>
+      </command_interface>
+      <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="velocity"><param name="initial_value">0.0</param></state_interface>
+    </joint>
+    <joint name="joint_right_wheel">
+      <command_interface name="velocity">
+        <param name="min">-6.0</param>
+        <param name="max">6.0</param>
+      </command_interface>
+      <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="velocity"><param name="initial_value">0.0</param></state_interface>
+    </joint>
+
+    <sensor name="lidar">
+      <param name="frame_name">laser</param>
+      <param name="angle_increment">0.017453292519943295</param>
+      <param name="min_angle">-3.141592653589793</param>
+      <param name="max_angle">3.12413936106985</param>
+      <param name="range_min">0.20</param>
+      <param name="range_max">8.0</param>
+      <param name="laserscan_topic">/scan</param>
+    </sensor>
+  </ros2_control>
+</robot>

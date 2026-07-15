@@ -19,12 +19,15 @@ import time
 from typing import List, Optional, Tuple
 
 from langchain_core.tools import tool
-try:
-    from rclpy.logging import get_logging_directory
-except ModuleNotFoundError:
-    # 本项目的 ROS2 工具主要通过 `ros2` CLI 工作；本地单元测试会 mock CLI 调用。
-    # 如果当前机器没有安装 rclpy，仍允许模块被导入，只在日志目录查询时使用通用默认路径。
-    get_logging_directory = None
+
+
+def _get_logging_directory():
+    """Import rclpy only when this ROS-specific operation is invoked."""
+    try:
+        from rclpy.logging import get_logging_directory
+    except ModuleNotFoundError:
+        return None
+    return get_logging_directory()
 
 
 def execute_ros_command(command: str) -> Tuple[bool, str]:
@@ -361,10 +364,9 @@ def ros2_doctor() -> dict:
 
 def ros2_log_directories():
     """获取所有可用的 ROS2 日志目录。"""
-    if get_logging_directory is None:
+    log_dir = _get_logging_directory()
+    if log_dir is None:
         log_dir = os.path.join(os.path.expanduser("~"), ".ros", "log")
-    else:
-        log_dir = get_logging_directory()
     print(f"ROS 2 日志存储在：{log_dir}")
 
     return {"default": f"{log_dir}"}

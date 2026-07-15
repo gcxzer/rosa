@@ -1,0 +1,14 @@
+<mujoco model="ROSA Stretch 3 office laboratory scene">
+  <include file="hello_robot_stretch_3/stretch_nav.xml"/>
+  <include file="generated/office_lab_world.xml"/>
+
+  <statistic center="0 0 0.7" extent="6"/>
+  <visual>
+    <headlight diffuse="0.55 0.55 0.55" ambient="0.35 0.35 0.35" specular="0.1 0.1 0.1"/>
+    <rgba haze="0.12 0.16 0.20 1"/>
+    <global azimuth="135" elevation="-35"/>
+  </visual>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.42 0.62 0.82" rgb2="0.96 0.97 1" width="512" height="3072"/>
+  </asset>
+</mujoco>
