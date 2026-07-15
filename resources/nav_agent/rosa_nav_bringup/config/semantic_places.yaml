@@ -1,0 +1,49 @@
+schema_version: 1
+frame_id: map
+map_yaml: ../maps/office_lab.yaml
+places:
+- id: reception
+  display_name: Reception
+  aliases:
+  - reception
+  - reception desk
+  - 接待区
+  - 前台
+  pose:
+    x: -2.8
+    y: -2.25
+    yaw: 1.5707963268
+- id: storage
+  display_name: Storage shelf
+  aliases:
+  - storage
+  - storage shelf
+  - 储物架
+  - 存储区
+  pose:
+    x: 2.7
+    y: 1.25
+    yaw: 1.5707963268
+- id: inspection
+  display_name: Inspection bench
+  aliases:
+  - inspection
+  - inspection bench
+  - 检查台
+  - 巡检点
+  pose:
+    x: -2.6
+    y: 1.15
+    yaw: 1.5707963268
+- id: charging
+  display_name: Charging station
+  aliases:
+  - charging
+  - charging station
+  - charger
+  - 充电站
+  - 充电区
+  pose:
+    x: 3.65
+    y: -2.75
+    yaw: 0.0
