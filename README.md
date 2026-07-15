@@ -126,7 +126,3 @@ scripts/
   load_arm_ros2_resources.sh
   load_nav_ros2_resources.sh
 ```
-
-## License
-
-见 [LICENSE](LICENSE)。Vendored Stretch 3 模型的来源、固定 revision 和上游许可证见 `resources/nav_agent/rosa_nav_bringup/mujoco/SOURCE.md` 与相邻许可证文件。
