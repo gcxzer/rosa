@@ -34,8 +34,7 @@ class ROS2NavigationAdapter:
         self.Duration = Duration
         self.Time = Time
         self.timeout = float(timeout)
-        self._owns_rclpy = not rclpy.ok()
-        if self._owns_rclpy:
+        if not rclpy.ok():
             rclpy.init()
         self.node = rclpy.create_node(
             "rosa_nav_runtime",
@@ -47,53 +46,6 @@ class ROS2NavigationAdapter:
         self.waypoint_client = ActionClient(self.node, FollowWaypoints, "/follow_waypoints")
         self._handles: dict[int, dict[str, Any]] = {}
 
-    def _spin_until(self, future: Any, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
-        while not future.done() and time.monotonic() < deadline:
-            self.rclpy.spin_once(self.node, timeout_sec=min(0.05, max(0.0, deadline - time.monotonic())))
-        return future.done()
-
-    def _discover(self, seconds: float = 0.25) -> None:
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            self.rclpy.spin_once(self.node, timeout_sec=0.02)
-
-    def _lifecycle_state(self, node_name: str, timeout: float) -> str:
-        client = self.node.create_client(self.GetState, f"/{node_name}/get_state")
-        try:
-            if not client.wait_for_service(timeout_sec=min(timeout, 1.0)):
-                return "unavailable"
-            future = client.call_async(self.GetState.Request())
-            if not self._spin_until(future, timeout):
-                return "timeout"
-            response = future.result()
-            return response.current_state.label if response is not None else "error"
-        finally:
-            self.node.destroy_client(client)
-
-    def _controllers(self, timeout: float) -> dict[str, str]:
-        client = self.node.create_client(self.ListControllers, "/controller_manager/list_controllers")
-        try:
-            if not client.wait_for_service(timeout_sec=min(timeout, 0.75)):
-                return {}
-            future = client.call_async(self.ListControllers.Request())
-            if not self._spin_until(future, timeout) or future.result() is None:
-                return {}
-            return {controller.name: controller.state for controller in future.result().controller}
-        finally:
-            self.node.destroy_client(client)
-
-    def _has_transform(self, target: str, source: str) -> bool:
-        try:
-            return bool(self.tf_buffer.can_transform(
-                target,
-                source,
-                self.Time(),
-                timeout=self.Duration(seconds=0.15),
-            ))
-        except Exception:
-            return False
-
     def check_readiness(self, timeout: float) -> dict[str, Any]:
         graph_deadline = time.monotonic() + timeout
         required_topics = {"/clock", "/joint_states", "/scan", "/odom", "/map"}
@@ -104,6 +56,7 @@ class ROS2NavigationAdapter:
         while time.monotonic() < graph_deadline and not required_topics.issubset(topics):
             self._discover(min(0.2, max(0.0, graph_deadline - time.monotonic())))
             topics.update(name for name, _types in self.node.get_topic_names_and_types())
+
         controllers = self._controllers(timeout)
         lifecycle = {
             "map_server": self._lifecycle_state("map_server", timeout),
@@ -287,5 +240,50 @@ class ROS2NavigationAdapter:
         for client in (self.pose_client, self.waypoint_client):
             client.destroy()
         self.node.destroy_node()
-        if self._owns_rclpy and self.rclpy.ok():
-            self.rclpy.shutdown()
+
+    def _spin_until(self, future: Any, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while not future.done() and time.monotonic() < deadline:
+            self.rclpy.spin_once(self.node, timeout_sec=min(0.05, max(0.0, deadline - time.monotonic())))
+        return future.done()
+
+    def _discover(self, seconds: float = 0.25) -> None:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self.rclpy.spin_once(self.node, timeout_sec=0.02)
+
+    def _lifecycle_state(self, node_name: str, timeout: float) -> str:
+        client = self.node.create_client(self.GetState, f"/{node_name}/get_state")
+        try:
+            if not client.wait_for_service(timeout_sec=min(timeout, 1.0)):
+                return "unavailable"
+            future = client.call_async(self.GetState.Request())
+            if not self._spin_until(future, timeout):
+                return "timeout"
+            response = future.result()
+            return response.current_state.label if response is not None else "error"
+        finally:
+            self.node.destroy_client(client)
+
+    def _controllers(self, timeout: float) -> dict[str, str]:
+        client = self.node.create_client(self.ListControllers, "/controller_manager/list_controllers")
+        try:
+            if not client.wait_for_service(timeout_sec=min(timeout, 0.75)):
+                return {}
+            future = client.call_async(self.ListControllers.Request())
+            if not self._spin_until(future, timeout) or future.result() is None:
+                return {}
+            return {controller.name: controller.state for controller in future.result().controller}
+        finally:
+            self.node.destroy_client(client)
+
+    def _has_transform(self, target: str, source: str) -> bool:
+        try:
+            return bool(self.tf_buffer.can_transform(
+                target,
+                source,
+                self.Time(),
+                timeout=self.Duration(seconds=0.15),
+            ))
+        except Exception:
+            return False
